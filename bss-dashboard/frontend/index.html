@@ -29,31 +29,109 @@ tailwind.config = {
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+  :root {
+    --bss-navy: #1A1A2E;
+    --bss-navy-deep: #12121F;
+    --bss-gold: #B8960C;
+    --bss-gold-bright: #E4C04A;
+    --glass-bg: rgba(19, 31, 58, 0.55);
+    --glass-border: rgba(125, 165, 215, 0.14);
+    --glass-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  }
+
   * { box-sizing: border-box; }
-  body { margin: 0; background: #050C18; color: #C9D6E8;
-         font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; }
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+  body { margin: 0;
+         background: radial-gradient(1100px 620px at 18% -12%, #131d38 0%, rgba(5,12,24,0) 60%), #050C18;
+         background-attachment: fixed;
+         color: #C9D6E8;
+         font-family: 'Inter', -apple-system, 'Segoe UI', system-ui, sans-serif;
+         letter-spacing: 0.01em; }
   body.light { background: #F0F4F8; color: #1E293B; }
 
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  h1, h2, h3 { letter-spacing: -0.015em; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #2A4D73; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3B6B96; }
 
   /* Leaflet dark tile override */
   .leaflet-tile { filter: invert(1) hue-rotate(195deg) brightness(0.75) contrast(0.88) saturate(0.7); }
   .leaflet-container { background: #0A1628 !important; }
   .leaflet-control-attribution { display: none !important; }
 
+  /* ── Glassmorphism card ──────────────────────────────────────── */
+  .card {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+  .light .card {
+    background: rgba(255, 255, 255, 0.85);
+    border-color: #CBD5E1;
+    box-shadow: 0 4px 20px rgba(30, 41, 59, 0.08);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  /* ── Module status cards: smooth state transitions ───────────── */
+  .module-card {
+    position: relative;
+    overflow: hidden;
+    transition: border-color .35s ease, box-shadow .45s ease, background .35s ease, transform .2s ease, opacity .35s ease;
+  }
+  .module-card:hover { transform: translateY(-2px); }
+  .module-card[data-status="pending"] { opacity: 0.72; }
+  .module-card[data-status="done"] {
+    box-shadow: var(--glass-shadow), inset 0 0 0 1px rgba(34, 197, 94, 0.12);
+  }
+  .module-card[data-status="running"] {
+    border-color: rgba(66, 165, 245, 0.55);
+    animation: moduleGlow 1.8s ease-in-out infinite;
+  }
+  @keyframes moduleGlow {
+    0%, 100% { box-shadow: var(--glass-shadow), 0 0 0 1px rgba(66,165,245,0.25), 0 0 18px rgba(66,165,245,0.10); }
+    50%      { box-shadow: 0 8px 34px rgba(0,0,0,0.40), 0 0 0 1px rgba(66,165,245,0.55), 0 0 30px rgba(66,165,245,0.30); }
+  }
+  /* shimmer sweep across running cards */
+  .module-card[data-status="running"]::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(105deg, transparent 32%, rgba(66,165,245,0.12) 50%, transparent 68%);
+    background-size: 220% 100%;
+    animation: shimmer 2.2s linear infinite;
+  }
+  @keyframes shimmer { 0% { background-position: 220% 0; } 100% { background-position: -120% 0; } }
+
+  /* live pulsing status dot (replaces plain "running" text glyph) */
+  .live-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: #42A5F5; margin-right: 6px; vertical-align: middle;
+    animation: livePulse 1.4s ease-out infinite;
+  }
+  @keyframes livePulse {
+    0%   { box-shadow: 0 0 0 0 rgba(66,165,245,0.55); }
+    70%  { box-shadow: 0 0 0 7px rgba(66,165,245,0); }
+    100% { box-shadow: 0 0 0 0 rgba(66,165,245,0); }
+  }
+
   .module-pulse { animation: pulse 1.5s ease-in-out infinite; }
-  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
 
-  .fade-in { animation: fadeIn 0.25s ease-out; }
-  @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+  .fade-in { animation: fadeIn 0.3s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
 
-  .sev-critical { color: #EF4444; }
-  .sev-high     { color: #F97316; }
-  .sev-medium   { color: #EAB308; }
-  .sev-low      { color: #22C55E; }
-  .sev-info     { color: #64748B; }
+  /* ── Severity text/util colors (referenced by JS classNames) ──── */
+  .sev-critical { color: #F87171; }
+  .sev-high     { color: #FB923C; }
+  .sev-medium   { color: #FACC15; }
+  .sev-low      { color: #34D399; }
+  .sev-info     { color: #94A3B8; }
 
   .bg-sev-critical { background: #EF4444; }
   .bg-sev-high     { background: #F97316; }
@@ -67,12 +145,37 @@ tailwind.config = {
   .border-sev-low      { border-color: #22C55E; }
   .border-sev-info     { border-color: #64748B; }
 
-  .card { background: #0F1F3D; border: 1px solid #162843; border-radius: 8px; }
-  .light .card { background: #FFFFFF; border-color: #CBD5E1; }
+  /* ── Severity pills (gradient) ───────────────────────────────── */
+  .sev-pill {
+    display: inline-block; color: #fff; font-weight: 800;
+    border-radius: 999px; letter-spacing: 0.06em;
+    border: 1px solid rgba(255,255,255,0.14);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  .sev-pill-critical { background: linear-gradient(135deg,#EF4444,#B91C1C); }
+  .sev-pill-high     { background: linear-gradient(135deg,#FB923C,#EA580C); }
+  .sev-pill-medium   { background: linear-gradient(135deg,#FACC15,#CA8A04); color:#3B2F00; }
+  .sev-pill-low      { background: linear-gradient(135deg,#34D399,#059669); }
+  .sev-pill-info     { background: linear-gradient(135deg,#94A3B8,#475569); }
+
+  /* ── Brand accents (navy #1A1A2E / gold #B8960C) ─────────────── */
+  .app-header {
+    background: linear-gradient(180deg, #1A1A2E 0%, #0A1424 100%) !important;
+    border-bottom: 1px solid rgba(184,150,12,0.30) !important;
+    box-shadow: 0 1px 0 rgba(184,150,12,0.16), 0 6px 24px rgba(0,0,0,0.35);
+  }
+  .nav-btn { position: relative; transition: color .18s ease; }
+  .nav-btn::after {
+    content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px;
+    background: linear-gradient(90deg, var(--bss-gold), var(--bss-gold-bright));
+    transform: scaleX(0); transform-origin: center; transition: transform .22s ease;
+  }
+  .nav-btn.active::after { transform: scaleX(1); }
 
   input, select { outline: none; }
   input:focus, select:focus { ring: 2px solid #1E88E5; }
-  button:focus-visible { outline: 2px solid #1E88E5; outline-offset: 2px; }
+  button:focus-visible { outline: 2px solid var(--bss-gold); outline-offset: 2px; }
 
   .tab-active { border-bottom: 2px solid #1E88E5; color: #42A5F5; }
 </style>
@@ -131,18 +234,10 @@ const sevColors = {
 
 function SevBadge({ sev, small }) {
   const s = (sev||'info').toLowerCase();
-  const colors = { critical:'#EF4444',high:'#F97316',medium:'#EAB308',low:'#22C55E',info:'#475569' };
   return (
-    <span style={{
-      background: colors[s] || '#475569',
-      color: '#fff',
-      fontSize: small ? '10px' : '11px',
-      fontWeight: 700,
-      padding: small ? '1px 6px' : '2px 8px',
-      borderRadius: 4,
-      fontFamily: "monospace",
-      letterSpacing: '0.05em',
-      display: 'inline-block',
+    <span className={`sev-pill sev-pill-${s}`} style={{
+      fontSize: small ? '9.5px' : '10.5px',
+      padding: small ? '2px 8px' : '3px 11px',
     }}>
       {s.toUpperCase()}
     </span>
@@ -168,11 +263,11 @@ function Header({ view, onBack, onNav, scanTarget }) {
   const { theme, toggle } = useContext(ThemeCtx);
   const dark = theme === 'dark';
   return (
-    <header style={{
+    <header className="app-header" style={{
       background: dark ? '#050C18' : '#0A1628',
       borderBottom: `1px solid ${dark ? '#162843' : '#1E3A5A'}`,
-      padding: '0 20px',
-      height: 52,
+      padding: '0 22px',
+      height: 56,
       display: 'flex',
       alignItems: 'center',
       gap: 16,
@@ -183,15 +278,16 @@ function Header({ view, onBack, onNav, scanTarget }) {
       {/* Logo */}
       <div style={{ display:'flex', alignItems:'center', gap:10, flexShrink:0 }}>
         <div style={{
-          width: 30, height: 30, borderRadius: 6,
+          width: 32, height: 32, borderRadius: 8,
           background: 'linear-gradient(135deg, #1E88E5, #0D47A1)',
           display:'flex', alignItems:'center', justifyContent:'center',
           fontSize: 14, fontWeight: 900, color: '#fff', fontFamily: 'monospace',
           letterSpacing: '-1px',
+          boxShadow: '0 0 0 1px rgba(184,150,12,0.55), 0 2px 10px rgba(0,0,0,0.4)',
         }}>BSS</div>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#E2E8F0', lineHeight: 1.1 }}>BSS Recon</div>
-          <div style={{ fontSize: 10, color: '#5B7FA6', lineHeight: 1.1 }}>Burgohy Security Solutions</div>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: '#F1F5FB', lineHeight: 1.15, letterSpacing: '0.01em' }}>BSS Recon</div>
+          <div style={{ fontSize: 9.5, color: '#B8960C', lineHeight: 1.15, fontWeight: 600, letterSpacing: '0.04em' }}>Burgohy Security Solutions</div>
         </div>
       </div>
 
@@ -200,12 +296,11 @@ function Header({ view, onBack, onNav, scanTarget }) {
         {[['home','Dashboard'],['traffic','Traffic Analyzer'],['phishing','Phishing Analyzer']].map(([k,l]) => {
           const active = view === k;
           return (
-            <button key={k} onClick={() => onNav(k)} style={{
+            <button key={k} onClick={() => onNav(k)} className={`nav-btn ${active ? 'active' : ''}`} style={{
               background:'none', border:'none', cursor:'pointer',
               fontSize:12, fontWeight: active ? 700 : 500,
-              color: active ? '#42A5F5' : '#5B7FA6',
+              color: active ? '#E4C04A' : '#5B7FA6',
               padding:'6px 10px', borderRadius:6,
-              borderBottom: `2px solid ${active ? '#1E88E5' : 'transparent'}`,
               transition:'color 0.15s',
             }}>{l}</button>
           );
@@ -613,14 +708,14 @@ function ScanningView({ scanId, target, active, onComplete }) {
       {/* Module grid */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))', gap:10 }}>
         {moduleList.map(([name, m]) => (
-          <div key={name} className="card" style={{
-            padding:'12px 14px',
+          <div key={name} className="card module-card" data-status={m.status} style={{
+            padding:'13px 15px',
             borderLeft:`3px solid ${statusColor[m.status] || '#2A4D73'}`,
           }}>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:4 }}>
               <span style={{ fontFamily:'monospace', fontSize:12, fontWeight:700, color:'#C9D6E8' }}>{name}</span>
               <span style={{ fontSize:10 }}>
-                {m.status === 'running' && <span className="module-pulse" style={{ color:'#42A5F5' }}>● running</span>}
+                {m.status === 'running' && <span style={{ color:'#42A5F5', fontWeight:700 }}><span className="live-dot"></span>running</span>}
                 {m.status === 'done'    && <span style={{ color:'#22C55E' }}>✓ done</span>}
                 {m.status === 'error'   && <span style={{ color:'#EF4444' }}>✗ error</span>}
                 {m.status === 'pending' && <span style={{ color:'#2A4D73' }}>○ pending</span>}
