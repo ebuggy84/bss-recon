@@ -1,0 +1,2174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BSS Recon — Burgohy Security Solutions</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        navy: { 950:'#050C18', 900:'#0A1628', 800:'#0F1F3D', 700:'#162843', 600:'#1E3A5A', 500:'#2A4D73' },
+        bss:  { blue:'#1E88E5', bright:'#42A5F5', dim:'#1565C0' },
+      },
+      fontFamily: { mono: ["'Courier New'", 'Courier', 'monospace'] },
+    }
+  }
+}
+</script>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #050C18; color: #C9D6E8;
+         font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; }
+  body.light { background: #F0F4F8; color: #1E293B; }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2A4D73; border-radius: 3px; }
+
+  /* Leaflet dark tile override */
+  .leaflet-tile { filter: invert(1) hue-rotate(195deg) brightness(0.75) contrast(0.88) saturate(0.7); }
+  .leaflet-container { background: #0A1628 !important; }
+  .leaflet-control-attribution { display: none !important; }
+
+  .module-pulse { animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+  .fade-in { animation: fadeIn 0.25s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+
+  .sev-critical { color: #EF4444; }
+  .sev-high     { color: #F97316; }
+  .sev-medium   { color: #EAB308; }
+  .sev-low      { color: #22C55E; }
+  .sev-info     { color: #64748B; }
+
+  .bg-sev-critical { background: #EF4444; }
+  .bg-sev-high     { background: #F97316; }
+  .bg-sev-medium   { background: #EAB308; }
+  .bg-sev-low      { background: #22C55E; }
+  .bg-sev-info     { background: #64748B; }
+
+  .border-sev-critical { border-color: #EF4444; }
+  .border-sev-high     { border-color: #F97316; }
+  .border-sev-medium   { border-color: #EAB308; }
+  .border-sev-low      { border-color: #22C55E; }
+  .border-sev-info     { border-color: #64748B; }
+
+  .card { background: #0F1F3D; border: 1px solid #162843; border-radius: 8px; }
+  .light .card { background: #FFFFFF; border-color: #CBD5E1; }
+
+  input, select { outline: none; }
+  input:focus, select:focus { ring: 2px solid #1E88E5; }
+  button:focus-visible { outline: 2px solid #1E88E5; outline-offset: 2px; }
+
+  .tab-active { border-bottom: 2px solid #1E88E5; color: #42A5F5; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+// Force classic JSX runtime and manually trigger Babel processing
+;(function() {
+  var orig = Babel.availablePresets['react'];
+  Babel.availablePresets['react'] = function(ctx, opts) {
+    return orig(ctx, Object.assign({}, opts || {}, { runtime: 'classic' }));
+  };
+  // Babel may have already registered its DOMContentLoaded — override by running after load
+  Babel.disableScriptTags();
+  window.addEventListener('load', function() { Babel.transformScriptTags(); });
+})();
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } = React;
+
+// ─── Config ───────────────────────────────────────────────────────────────────
+const API = `http://${window.location.hostname}:8000`;
+const WS_BASE = `ws://${window.location.hostname}:8000`;
+
+// ─── Theme context ─────────────────────────────────────────────────────────────
+const ThemeCtx = createContext({ theme: 'dark', toggle: () => {} });
+
+// ─── API helpers ───────────────────────────────────────────────────────────────
+const api = {
+  startScan: (target, active, modules) =>
+    fetch(`${API}/api/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target, active, modules: modules.length ? modules : null }),
+    }).then(r => r.json()),
+
+  getStatus: (id) => fetch(`${API}/api/scan/${id}/status`).then(r => r.json()),
+  getResults: (id) => fetch(`${API}/api/scan/${id}/results`).then(r => r.json()),
+  getHistory: () => fetch(`${API}/api/scans`).then(r => r.json()),
+  compare: (a, b) => fetch(`${API}/api/compare/${a}/${b}`).then(r => r.json()),
+};
+
+// ─── Severity helpers ──────────────────────────────────────────────────────────
+const SEV_ORDER = ['critical','high','medium','low','info'];
+const sevRank = s => SEV_ORDER.indexOf((s||'info').toLowerCase());
+const sevLabel = s => (s||'info').toUpperCase();
+const sevClass = s => `sev-${(s||'info').toLowerCase()}`;
+const sevBgClass = s => `bg-sev-${(s||'info').toLowerCase()}`;
+const sevBorderClass = s => `border-sev-${(s||'info').toLowerCase()}`;
+const sevColors = {
+  critical: '#EF4444', high: '#F97316', medium: '#EAB308', low: '#22C55E', info: '#64748B'
+};
+
+function SevBadge({ sev, small }) {
+  const s = (sev||'info').toLowerCase();
+  const colors = { critical:'#EF4444',high:'#F97316',medium:'#EAB308',low:'#22C55E',info:'#475569' };
+  return (
+    <span style={{
+      background: colors[s] || '#475569',
+      color: '#fff',
+      fontSize: small ? '10px' : '11px',
+      fontWeight: 700,
+      padding: small ? '1px 6px' : '2px 8px',
+      borderRadius: 4,
+      fontFamily: "monospace",
+      letterSpacing: '0.05em',
+      display: 'inline-block',
+    }}>
+      {s.toUpperCase()}
+    </span>
+  );
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) +
+    ' ' + d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' });
+}
+
+function fmtDuration(a, b) {
+  if (!a || !b) return null;
+  const ms = new Date(b) - new Date(a);
+  if (ms < 60000) return `${Math.round(ms/1000)}s`;
+  return `${Math.round(ms/60000)}m ${Math.round((ms%60000)/1000)}s`;
+}
+
+// ─── Header ────────────────────────────────────────────────────────────────────
+function Header({ view, onBack, onNav, scanTarget }) {
+  const { theme, toggle } = useContext(ThemeCtx);
+  const dark = theme === 'dark';
+  return (
+    <header style={{
+      background: dark ? '#050C18' : '#0A1628',
+      borderBottom: `1px solid ${dark ? '#162843' : '#1E3A5A'}`,
+      padding: '0 20px',
+      height: 52,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 16,
+      position: 'sticky',
+      top: 0,
+      zIndex: 100,
+    }}>
+      {/* Logo */}
+      <div style={{ display:'flex', alignItems:'center', gap:10, flexShrink:0 }}>
+        <div style={{
+          width: 30, height: 30, borderRadius: 6,
+          background: 'linear-gradient(135deg, #1E88E5, #0D47A1)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          fontSize: 14, fontWeight: 900, color: '#fff', fontFamily: 'monospace',
+          letterSpacing: '-1px',
+        }}>BSS</div>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#E2E8F0', lineHeight: 1.1 }}>BSS Recon</div>
+          <div style={{ fontSize: 10, color: '#5B7FA6', lineHeight: 1.1 }}>Burgohy Security Solutions</div>
+        </div>
+      </div>
+
+      {/* Primary nav */}
+      <nav style={{ display:'flex', gap:2, marginLeft:6, flexShrink:0 }}>
+        {[['home','Dashboard'],['traffic','Traffic Analyzer'],['phishing','Phishing Analyzer']].map(([k,l]) => {
+          const active = view === k;
+          return (
+            <button key={k} onClick={() => onNav(k)} style={{
+              background:'none', border:'none', cursor:'pointer',
+              fontSize:12, fontWeight: active ? 700 : 500,
+              color: active ? '#42A5F5' : '#5B7FA6',
+              padding:'6px 10px', borderRadius:6,
+              borderBottom: `2px solid ${active ? '#1E88E5' : 'transparent'}`,
+              transition:'color 0.15s',
+            }}>{l}</button>
+          );
+        })}
+      </nav>
+
+      {/* Breadcrumb */}
+      {!['home','traffic','phishing'].includes(view) && (
+        <div style={{ display:'flex', alignItems:'center', gap: 8, flex: 1 }}>
+          <button onClick={onBack} style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: '#5B7FA6', fontSize: 12, padding: '4px 0',
+            display:'flex', alignItems:'center', gap:4,
+          }}>
+            <span>←</span> Home
+          </button>
+          {scanTarget && (
+            <>
+              <span style={{ color:'#162843' }}>/</span>
+              <span style={{ fontSize: 12, color:'#42A5F5', fontFamily:'monospace' }}>{scanTarget}</span>
+            </>
+          )}
+          {view === 'compare' && (
+            <>
+              <span style={{ color:'#162843' }}>/</span>
+              <span style={{ fontSize: 12, color:'#A78BFA' }}>Comparison</span>
+            </>
+          )}
+        </div>
+      )}
+      <div style={{ flex: 1 }} />
+
+      {/* Theme toggle */}
+      <button onClick={toggle} style={{
+        background: dark ? '#0F1F3D' : '#FFFFFF22',
+        border: `1px solid ${dark ? '#162843' : '#3B5A8A'}`,
+        borderRadius: 6, cursor: 'pointer',
+        color: '#C9D6E8', fontSize: 11, padding: '5px 10px',
+        display:'flex', alignItems:'center', gap: 5,
+      }}>
+        {dark ? '☀ Light' : '☾ Dark'}
+      </button>
+    </header>
+  );
+}
+
+// ─── Sidebar ────────────────────────────────────────────────────────────────────
+function Sidebar({ history, onSelect, activeScanId, compareMode, selectedForCompare, onToggleCompare }) {
+  const { theme } = useContext(ThemeCtx);
+  const dark = theme === 'dark';
+
+  return (
+    <aside style={{
+      width: 220,
+      flexShrink: 0,
+      background: dark ? '#08111F' : '#0A1628',
+      borderRight: `1px solid ${dark ? '#0F1F3D' : '#162843'}`,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        padding: '12px 14px 8px',
+        borderBottom: '1px solid #0F1F3D',
+        display:'flex', alignItems:'center', justifyContent:'space-between',
+      }}>
+        <span style={{ fontSize:10, fontWeight:700, color:'#3B6B96', letterSpacing:'0.1em', textTransform:'uppercase' }}>
+          Scan History
+        </span>
+        {history.length >= 2 && (
+          <button onClick={onToggleCompare} style={{
+            fontSize: 9, padding: '2px 6px', borderRadius: 4,
+            background: compareMode ? '#1E88E5' : 'transparent',
+            border: `1px solid ${compareMode ? '#1E88E5' : '#2A4D73'}`,
+            color: compareMode ? '#fff' : '#5B7FA6',
+            cursor: 'pointer', letterSpacing:'0.04em',
+          }}>
+            COMPARE
+          </button>
+        )}
+      </div>
+
+      <div style={{ flex:1, overflowY:'auto', padding:'8px 0' }}>
+        {history.length === 0 && (
+          <div style={{ padding:'20px 14px', fontSize:11, color:'#2A4D73', textAlign:'center' }}>
+            No scans yet
+          </div>
+        )}
+        {history.map(h => {
+          const isActive = h.scan_id === activeScanId;
+          const isSelected = selectedForCompare.includes(h.scan_id);
+          const sc = h.severity_counts || {};
+          return (
+            <div key={h.scan_id} onClick={() => onSelect(h.scan_id)} style={{
+              padding: '9px 14px',
+              cursor: 'pointer',
+              background: isActive ? '#0F1F3D' : isSelected ? '#0A1E38' : 'transparent',
+              borderLeft: `3px solid ${isActive ? '#1E88E5' : isSelected ? '#A78BFA' : 'transparent'}`,
+              transition: 'background 0.15s',
+            }}>
+              <div style={{ display:'flex', alignItems:'center', gap: 5, marginBottom: 3 }}>
+                {compareMode && (
+                  <span style={{
+                    width:14, height:14, borderRadius:3, border:`1.5px solid ${isSelected ? '#A78BFA':'#2A4D73'}`,
+                    background: isSelected ? '#A78BFA22' : 'transparent',
+                    display:'inline-flex', alignItems:'center', justifyContent:'center', fontSize:9,
+                    color: '#A78BFA', flexShrink:0,
+                  }}>{isSelected ? '✓' : ''}</span>
+                )}
+                <span style={{ fontSize:11, fontWeight:600, color:'#C9D6E8', fontFamily:'monospace',
+                  overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1 }}>
+                  {h.target}
+                </span>
+              </div>
+              <div style={{ fontSize:10, color:'#3B6B96', marginBottom: 4 }}>{fmtDate(h.started_at)}</div>
+              <div style={{ display:'flex', alignItems:'center', gap: 4, flexWrap:'wrap' }}>
+                {h.status === 'running' && (
+                  <span style={{ fontSize:10, color:'#42A5F5' }} className="module-pulse">● scanning</span>
+                )}
+                {h.status === 'complete' && SEV_ORDER.filter(s => sc[s]).map(s => (
+                  <span key={s} style={{
+                    fontSize:9, fontWeight:700, color: sevColors[s], fontFamily:'monospace'
+                  }}>{sc[s]}{s[0].toUpperCase()}</span>
+                ))}
+                {h.status === 'complete' && !SEV_ORDER.some(s => sc[s]) && (
+                  <span style={{ fontSize:10, color:'#22C55E' }}>✓ clean</span>
+                )}
+                {h.status === 'queued' && (
+                  <span style={{ fontSize:10, color:'#5B7FA6' }}>queued</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+// ─── Home view ─────────────────────────────────────────────────────────────────
+const ALL_MODULES = [
+  { name:'whois',mode:'passive' },{ name:'dns',mode:'passive' },{ name:'subdomains',mode:'passive' },
+  { name:'ssl',mode:'passive' },{ name:'shodan',mode:'passive' },{ name:'dorks',mode:'passive' },
+  { name:'virustotal',mode:'passive' },{ name:'hunter',mode:'passive' },{ name:'diff',mode:'passive' },
+  { name:'wafdetect',mode:'active' },{ name:'headers',mode:'active' },{ name:'techdetect',mode:'active' },
+  { name:'webprobe',mode:'active' },{ name:'jsanalyze',mode:'active' },
+  { name:'nuclei',mode:'active' },{ name:'nmap',mode:'active' },{ name:'score',mode:'passive' },
+];
+
+function HomeView({ onScanStart }) {
+  const { theme } = useContext(ThemeCtx);
+  const dark = theme === 'dark';
+  const [target, setTarget] = useState('');
+  const [active, setActive] = useState(false);
+  const [showModules, setShowModules] = useState(false);
+  const [selectedModules, setSelectedModules] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const toggleModule = (name) =>
+    setSelectedModules(p => p.includes(name) ? p.filter(n => n !== name) : [...p, name]);
+
+  const handleScan = async () => {
+    if (!target.trim()) { setError('Enter a target domain'); return; }
+    setLoading(true); setError('');
+    try {
+      const r = await api.startScan(target.trim(), active, selectedModules);
+      if (r.scan_id) onScanStart(r.scan_id, target.trim(), active);
+      else setError(r.detail || 'Failed to start scan');
+    } catch(e) {
+      setError('Cannot reach backend — is uvicorn running on port 8000?');
+    }
+    setLoading(false);
+  };
+
+  const inputStyle = {
+    background: dark ? '#0F1F3D' : '#fff',
+    border: `1.5px solid ${dark ? '#1E3A5A' : '#CBD5E1'}`,
+    borderRadius: 8,
+    color: dark ? '#E2E8F0' : '#1E293B',
+    fontSize: 15,
+    padding: '12px 16px',
+    width: '100%',
+    fontFamily: 'monospace',
+  };
+
+  return (
+    <div className="fade-in" style={{ maxWidth: 640, margin: '60px auto', padding: '0 20px' }}>
+      {/* Logo / headline */}
+      <div style={{ textAlign:'center', marginBottom: 40 }}>
+        <div style={{
+          width: 60, height: 60, borderRadius: 12,
+          background: 'linear-gradient(135deg, #1E88E5, #0D47A1)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          fontSize: 22, fontWeight: 900, color: '#fff', fontFamily: 'monospace',
+          margin: '0 auto 16px', letterSpacing: '-1px',
+          boxShadow: '0 0 40px #1E88E530',
+        }}>BSS</div>
+        <h1 style={{ fontSize: 26, fontWeight: 700, color:'#E2E8F0', margin: '0 0 6px' }}>
+          BSS Recon Dashboard
+        </h1>
+        <p style={{ fontSize: 13, color:'#3B6B96', margin: 0 }}>
+          Burgohy Security Solutions — Passive & Active Recon Platform
+        </p>
+      </div>
+
+      {/* Scan card */}
+      <div className="card" style={{ padding: 24 }}>
+        <label style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+          textTransform:'uppercase', display:'block', marginBottom:8 }}>Target Domain</label>
+        <input
+          value={target}
+          onChange={e => setTarget(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleScan()}
+          placeholder="example.com"
+          style={inputStyle}
+        />
+
+        {/* Mode toggle */}
+        <div style={{ display:'flex', gap:10, marginTop:14, alignItems:'center' }}>
+          <label style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', userSelect:'none' }}>
+            <div onClick={() => setActive(!active)} style={{
+              width: 38, height: 20, borderRadius: 10, position:'relative',
+              background: active ? '#1E88E5' : dark ? '#162843' : '#CBD5E1',
+              transition:'background 0.2s', cursor:'pointer', flexShrink:0,
+            }}>
+              <div style={{
+                position:'absolute', top:3, left: active ? 20 : 3,
+                width:14, height:14, borderRadius:7, background:'#fff',
+                transition:'left 0.2s', boxShadow:'0 1px 3px #0005',
+              }}/>
+            </div>
+            <span style={{ fontSize:12, color: active ? '#42A5F5' : '#5B7FA6' }}>
+              {active ? 'Active mode (needs authorization)' : 'Passive mode only (OSINT)'}
+            </span>
+          </label>
+        </div>
+
+        {/* Module selector */}
+        <div style={{ marginTop:14 }}>
+          <button onClick={() => setShowModules(!showModules)} style={{
+            background:'none', border:'none', cursor:'pointer',
+            fontSize:11, color:'#3B6B96', padding:0, display:'flex', alignItems:'center', gap:5,
+          }}>
+            {showModules ? '▼' : '▶'} Module selection
+            {selectedModules.length > 0 && (
+              <span style={{
+                background:'#1E88E5', color:'#fff', fontSize:9, padding:'1px 5px',
+                borderRadius:4, fontWeight:700,
+              }}>{selectedModules.length}</span>
+            )}
+            {selectedModules.length === 0 && (
+              <span style={{ fontSize:10, color:'#2A4D73' }}>(all)</span>
+            )}
+          </button>
+
+          {showModules && (
+            <div style={{
+              display:'flex', flexWrap:'wrap', gap:6, marginTop:10,
+              padding:'12px', background: dark ? '#050C18' : '#F8FAFC',
+              borderRadius:6, border:`1px solid ${dark ? '#0F1F3D':'#E2E8F0'}`,
+            }}>
+              {ALL_MODULES.filter(m => active || m.mode === 'passive').map(m => {
+                const sel = selectedModules.includes(m.name);
+                return (
+                  <button key={m.name} onClick={() => toggleModule(m.name)} style={{
+                    fontSize:10, padding:'3px 8px', borderRadius:4,
+                    border:`1px solid ${sel ? (m.mode==='active'?'#F97316':'#1E88E5') : dark?'#162843':'#CBD5E1'}`,
+                    background: sel ? (m.mode==='active'?'#F9731620':'#1E88E520') : 'transparent',
+                    color: sel ? (m.mode==='active'?'#F97316':'#42A5F5') : '#5B7FA6',
+                    cursor:'pointer', fontFamily:'monospace',
+                  }}>
+                    {m.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div style={{ marginTop:12, fontSize:12, color:'#EF4444', padding:'8px 12px',
+            background:'#EF444415', borderRadius:6, border:'1px solid #EF444430' }}>
+            {error}
+          </div>
+        )}
+
+        <button
+          onClick={handleScan}
+          disabled={loading}
+          style={{
+            marginTop:18, width:'100%',
+            background: loading ? '#1565C0' : 'linear-gradient(135deg, #1E88E5, #1565C0)',
+            border:'none', borderRadius:8, color:'#fff',
+            fontSize:14, fontWeight:700, padding:'13px',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            letterSpacing:'0.03em',
+            boxShadow: loading ? 'none' : '0 4px 15px #1E88E530',
+            transition: 'all 0.2s',
+          }}
+        >
+          {loading ? 'Starting scan…' : '→ Start Scan'}
+        </button>
+      </div>
+
+      <p style={{ textAlign:'center', marginTop:20, fontSize:11, color:'#1E3A5A' }}>
+        Backend must be running: <span style={{ fontFamily:'monospace', color:'#3B6B96' }}>
+          uvicorn main:app --port 8000
+        </span>
+      </p>
+    </div>
+  );
+}
+
+// ─── Scanning view ─────────────────────────────────────────────────────────────
+function ScanningView({ scanId, target, active, onComplete }) {
+  const [modules, setModules] = useState({});
+  const [progress, setProgress] = useState({ completed:0, total:0 });
+  const [status, setStatus] = useState('connecting');
+  const wsRef = useRef(null);
+
+  useEffect(() => {
+    const ws = new WebSocket(`${WS_BASE}/ws/scan/${scanId}`);
+    wsRef.current = ws;
+
+    ws.onopen = () => setStatus('connected');
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'ping') return;
+
+      if (msg.type === 'started') {
+        const init = {};
+        msg.modules.forEach(m => { init[m.name] = { status:'pending', description:m.description, mode:m.mode, finding_count:0 }; });
+        setModules(init);
+        setProgress({ completed:0, total:msg.modules.length });
+      }
+      if (msg.type === 'module_start') {
+        setModules(p => ({ ...p, [msg.module]: { ...p[msg.module], status:'running' } }));
+      }
+      if (msg.type === 'module_done') {
+        setModules(p => ({ ...p, [msg.module]: { ...p[msg.module], status:'done', finding_count:msg.finding_count } }));
+        setProgress({ completed:msg.completed, total:msg.total });
+      }
+      if (msg.type === 'module_error') {
+        setModules(p => ({ ...p, [msg.module]: { ...p[msg.module], status:'error', error:msg.error } }));
+        setProgress({ completed:msg.completed, total:msg.total });
+      }
+      if (msg.type === 'complete') {
+        setStatus('complete');
+        setTimeout(() => onComplete(scanId), 800);
+      }
+    };
+    ws.onerror = () => {
+      setStatus('error');
+      // Fall back to polling
+      const poll = setInterval(async () => {
+        try {
+          const s = await api.getStatus(scanId);
+          setModules(s.modules || {});
+          setProgress({ completed: s.completed_modules, total: s.total_modules });
+          if (s.status === 'complete') { clearInterval(poll); setStatus('complete'); setTimeout(() => onComplete(scanId), 800); }
+        } catch {}
+      }, 1500);
+      return () => clearInterval(poll);
+    };
+    return () => ws.close();
+  }, [scanId]);
+
+  const pct = progress.total > 0 ? Math.round((progress.completed / progress.total) * 100) : 0;
+  const moduleList = Object.entries(modules);
+
+  const statusColor = { running:'#1E88E5', done:'#22C55E', error:'#EF4444', pending:'#2A4D73' };
+
+  return (
+    <div className="fade-in" style={{ maxWidth:820, margin:'32px auto', padding:'0 20px' }}>
+      {/* Header */}
+      <div className="card" style={{ padding:'18px 22px', marginBottom:16 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+          <div>
+            <div style={{ fontSize:11, color:'#3B6B96', marginBottom:3, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase' }}>
+              {status === 'complete' ? 'Scan Complete' : 'Scanning'}
+            </div>
+            <div style={{ fontSize:16, fontWeight:700, fontFamily:'monospace', color:'#E2E8F0' }}>{target}</div>
+          </div>
+          <div style={{ textAlign:'right' }}>
+            <div style={{ fontSize:24, fontWeight:700, color:'#1E88E5', fontVariantNumeric:'tabular-nums' }}>{pct}%</div>
+            <div style={{ fontSize:11, color:'#3B6B96' }}>{progress.completed}/{progress.total} modules</div>
+          </div>
+        </div>
+        {/* Progress bar */}
+        <div style={{ height:4, background:'#0A1628', borderRadius:2, overflow:'hidden' }}>
+          <div style={{
+            height:'100%', borderRadius:2, transition:'width 0.4s ease',
+            width:`${pct}%`,
+            background: status === 'complete' ? '#22C55E' : 'linear-gradient(90deg, #1E88E5, #42A5F5)',
+          }}/>
+        </div>
+        {active && (
+          <div style={{ marginTop:8, fontSize:11, color:'#F97316', display:'flex', alignItems:'center', gap:5 }}>
+            <span>⚡</span> Active mode — ensure you have written authorization
+          </div>
+        )}
+      </div>
+
+      {/* Module grid */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))', gap:10 }}>
+        {moduleList.map(([name, m]) => (
+          <div key={name} className="card" style={{
+            padding:'12px 14px',
+            borderLeft:`3px solid ${statusColor[m.status] || '#2A4D73'}`,
+          }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:4 }}>
+              <span style={{ fontFamily:'monospace', fontSize:12, fontWeight:700, color:'#C9D6E8' }}>{name}</span>
+              <span style={{ fontSize:10 }}>
+                {m.status === 'running' && <span className="module-pulse" style={{ color:'#42A5F5' }}>● running</span>}
+                {m.status === 'done'    && <span style={{ color:'#22C55E' }}>✓ done</span>}
+                {m.status === 'error'   && <span style={{ color:'#EF4444' }}>✗ error</span>}
+                {m.status === 'pending' && <span style={{ color:'#2A4D73' }}>○ pending</span>}
+              </span>
+            </div>
+            <div style={{ fontSize:10, color:'#3B6B96', marginBottom:4 }}>{m.description}</div>
+            {m.status === 'done' && m.finding_count > 0 && (
+              <div style={{ fontSize:10, color:'#F97316', fontWeight:700 }}>
+                {m.finding_count} finding{m.finding_count !== 1 ? 's' : ''}
+              </div>
+            )}
+            {m.status === 'error' && (
+              <div style={{ fontSize:10, color:'#EF4444' }} title={m.error}>error — {m.error?.slice(0,40)}</div>
+            )}
+            {m.mode === 'active' && (
+              <div style={{ fontSize:9, color:'#F9731660', marginTop:2, fontWeight:700, letterSpacing:'0.05em' }}>ACTIVE</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Charts ────────────────────────────────────────────────────────────────────
+function OWASPChart({ findings }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    const counts = {};
+    findings.forEach(f => {
+      const cat = (f.owasp || 'Unknown').split(' ').slice(0,2).join(' ');
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+    const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,8);
+    const labels = sorted.map(([k]) => k);
+    const data = sorted.map(([,v]) => v);
+    const colors = sorted.map(([,v], i) => `hsl(${210 + i*12}, 70%, ${50 - i*3}%)`);
+
+    if (chartRef.current) { chartRef.current.destroy(); }
+    if (!canvasRef.current || sorted.length === 0) return;
+
+    chartRef.current = new Chart(canvasRef.current, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ data, backgroundColor: colors, borderRadius: 4, borderSkipped: false }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend:{ display:false }, tooltip: {
+          callbacks: { label: ctx => ` ${ctx.raw} finding${ctx.raw !== 1 ? 's':''}`}
+        }},
+        scales: {
+          x: { grid:{ color:'#162843' }, ticks:{ color:'#5B7FA6', font:{size:10} } },
+          y: { grid:{ display:false }, ticks:{ color:'#C9D6E8', font:{size:10} } },
+        },
+      },
+    });
+    return () => { chartRef.current?.destroy(); chartRef.current = null; };
+  }, [findings]);
+
+  if (!findings.length) return null;
+  return (
+    <div className="card" style={{ padding:'16px 18px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+        textTransform:'uppercase', marginBottom:12 }}>OWASP Top 10 Coverage</div>
+      <div style={{ height: 200 }}><canvas ref={canvasRef}/></div>
+    </div>
+  );
+}
+
+function SeverityDonut({ counts }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    const sevsWithData = SEV_ORDER.filter(s => counts[s]);
+    if (!sevsWithData.length || !canvasRef.current) return;
+    if (chartRef.current) chartRef.current.destroy();
+
+    chartRef.current = new Chart(canvasRef.current, {
+      type: 'doughnut',
+      data: {
+        labels: sevsWithData.map(s => s.charAt(0).toUpperCase() + s.slice(1)),
+        datasets: [{
+          data: sevsWithData.map(s => counts[s]),
+          backgroundColor: sevsWithData.map(s => sevColors[s]),
+          borderColor: '#0F1F3D',
+          borderWidth: 2,
+          hoverOffset: 4,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '68%',
+        plugins: {
+          legend: { position:'right', labels:{ color:'#C9D6E8', font:{size:11}, boxWidth:12, padding:10 }},
+          tooltip: { callbacks: { label: ctx => ` ${ctx.raw} finding${ctx.raw !== 1 ? 's':''}` }},
+        },
+      },
+    });
+    return () => { chartRef.current?.destroy(); chartRef.current = null; };
+  }, [counts]);
+
+  const total = SEV_ORDER.reduce((a,s) => a + (counts[s]||0), 0);
+  if (!total) return null;
+
+  return (
+    <div className="card" style={{ padding:'16px 18px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+        textTransform:'uppercase', marginBottom:12 }}>Severity Distribution</div>
+      <div style={{ height: 160, position:'relative' }}>
+        <canvas ref={canvasRef}/>
+        <div style={{
+          position:'absolute', top:'50%', left:'34%', transform:'translate(-50%,-50%)',
+          textAlign:'center', pointerEvents:'none',
+        }}>
+          <div style={{ fontSize:22, fontWeight:700, color:'#E2E8F0', fontVariantNumeric:'tabular-nums' }}>{total}</div>
+          <div style={{ fontSize:10, color:'#3B6B96' }}>findings</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrendChart({ history, target }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+  const scans = useMemo(() =>
+    history
+      .filter(h => h.target === target && h.status === 'complete' && h.started_at)
+      .sort((a,b) => new Date(a.started_at) - new Date(b.started_at))
+      .slice(-10),
+    [history, target]
+  );
+
+  useEffect(() => {
+    if (scans.length < 2 || !canvasRef.current) return;
+    if (chartRef.current) chartRef.current.destroy();
+
+    const labels = scans.map(s => fmtDate(s.started_at));
+    const datasets = ['critical','high','medium'].map(sev => ({
+      label: sev.charAt(0).toUpperCase() + sev.slice(1),
+      data: scans.map(s => (s.severity_counts||{})[sev] || 0),
+      borderColor: sevColors[sev],
+      backgroundColor: sevColors[sev] + '20',
+      tension: 0.35,
+      fill: true,
+      pointRadius: 4,
+    }));
+
+    chartRef.current = new Chart(canvasRef.current, {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins: { legend:{ labels:{ color:'#C9D6E8', font:{size:10}, boxWidth:10 }}},
+        scales: {
+          x: { grid:{ color:'#162843' }, ticks:{ color:'#5B7FA6', font:{size:9} }},
+          y: { grid:{ color:'#162843' }, ticks:{ color:'#5B7FA6', font:{size:10} }, min:0, precision:0 },
+        },
+      },
+    });
+    return () => { chartRef.current?.destroy(); chartRef.current = null; };
+  }, [scans]);
+
+  if (scans.length < 2) return null;
+  return (
+    <div className="card" style={{ padding:'16px 18px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+        textTransform:'uppercase', marginBottom:12 }}>Severity Trend — {target}</div>
+      <div style={{ height:180 }}><canvas ref={canvasRef}/></div>
+    </div>
+  );
+}
+
+// ─── Threat map ────────────────────────────────────────────────────────────────
+function ThreatMap({ findings }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+
+  useEffect(() => {
+    if (!mapRef.current || mapInstanceRef.current) return;
+    const map = L.map(mapRef.current, { zoomControl:true, scrollWheelZoom:false });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution:'OSM', maxZoom:18
+    }).addTo(map);
+    map.setView([20, 0], 2);
+    mapInstanceRef.current = map;
+  }, []);
+
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    // Extract IPs from _nmap findings
+    const ips = [];
+    findings.forEach(f => {
+      if (f._nmap?.host) ips.push(f._nmap.host);
+    });
+    const uniqueIps = [...new Set(ips)].filter(ip => /^\d+\.\d+\.\d+\.\d+$/.test(ip));
+
+    if (!uniqueIps.length) return;
+
+    // Batch geolocate via ip-api.com (free, 100/min limit)
+    const batch = uniqueIps.slice(0, 20).map(ip => ({ query: ip }));
+    fetch('http://ip-api.com/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(batch),
+    })
+    .then(r => r.json())
+    .then(results => {
+      results.filter(r => r.status === 'success').forEach(r => {
+        const marker = L.circleMarker([r.lat, r.lon], {
+          radius: 7, color: '#1E88E5', fillColor: '#42A5F5', fillOpacity: 0.8, weight: 2
+        });
+        marker.bindPopup(
+          `<div style="font-family:monospace;font-size:12px;line-height:1.6">
+            <b>${r.query}</b><br/>
+            ${r.city}, ${r.country}<br/>
+            ISP: ${r.isp || '—'}
+          </div>`
+        );
+        marker.addTo(map);
+      });
+    })
+    .catch(() => {}); // Silent fail if ip-api is unreachable
+  }, [findings]);
+
+  return (
+    <div className="card" style={{ padding:'16px 18px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+        textTransform:'uppercase', marginBottom:12 }}>Threat Map — Infrastructure Geolocation</div>
+      <div ref={mapRef} style={{ height:250, borderRadius:6, overflow:'hidden' }}/>
+      <div style={{ fontSize:10, color:'#2A4D73', marginTop:6 }}>
+        IPs extracted from Nmap findings — geolocated via ip-api.com
+      </div>
+    </div>
+  );
+}
+
+// ─── Module status panel ───────────────────────────────────────────────────────
+function ModulePanel({ modules }) {
+  const entries = Object.entries(modules);
+  if (!entries.length) return null;
+  const statusIcon = { done:'✓', error:'✗', running:'●', pending:'○' };
+  const statusColor = { done:'#22C55E', error:'#EF4444', running:'#42A5F5', pending:'#2A4D73' };
+
+  return (
+    <div className="card" style={{ padding:'16px 18px' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+        textTransform:'uppercase', marginBottom:12 }}>Module Results</div>
+      <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+        {entries.map(([name, m]) => (
+          <div key={name} style={{
+            display:'flex', alignItems:'center', gap:10, padding:'5px 8px',
+            borderRadius:4, background:'#050C18',
+          }}>
+            <span style={{ fontSize:11, color: statusColor[m.status]||'#5B7FA6', width:12, textAlign:'center' }}>
+              {statusIcon[m.status]||'○'}
+            </span>
+            <span style={{ fontFamily:'monospace', fontSize:11, color:'#C9D6E8', flex:1 }}>{name}</span>
+            {m.finding_count > 0 && (
+              <span style={{ fontSize:10, color:'#F97316', fontWeight:700, fontVariantNumeric:'tabular-nums' }}>
+                {m.finding_count}
+              </span>
+            )}
+            {m.mode === 'active' && (
+              <span style={{ fontSize:9, color:'#F97316', fontWeight:700, letterSpacing:'0.04em' }}>ACT</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Findings table ────────────────────────────────────────────────────────────
+function FindingsTable({ findings }) {
+  const [sortKey, setSortKey] = useState('severity');
+  const [sortDir, setSortDir] = useState(1);
+  const [expandedId, setExpandedId] = useState(null);
+  const [filterSev, setFilterSev] = useState([]);
+  const [filterMod, setFilterMod] = useState('');
+  const [filterText, setFilterText] = useState('');
+
+  const modules = useMemo(() => [...new Set(findings.map(f => f.module).filter(Boolean))], [findings]);
+
+  const sorted = useMemo(() => {
+    let f = findings.filter(x => {
+      if (filterSev.length && !filterSev.includes(x.severity?.toLowerCase())) return false;
+      if (filterMod && x.module !== filterMod) return false;
+      if (filterText) {
+        const t = filterText.toLowerCase();
+        return (x.title||'').toLowerCase().includes(t) ||
+               (x.detail||'').toLowerCase().includes(t) ||
+               (x.owasp||'').toLowerCase().includes(t);
+      }
+      return true;
+    });
+    return f.sort((a,b) => {
+      let va, vb;
+      if (sortKey === 'severity') { va = sevRank(a.severity); vb = sevRank(b.severity); }
+      else { va = (a[sortKey]||'').toLowerCase(); vb = (b[sortKey]||'').toLowerCase(); }
+      return va < vb ? -sortDir : va > vb ? sortDir : 0;
+    });
+  }, [findings, sortKey, sortDir, filterSev, filterMod, filterText]);
+
+  const toggleSort = (k) => {
+    if (sortKey === k) setSortDir(d => -d);
+    else { setSortKey(k); setSortDir(1); }
+  };
+
+  const thStyle = (k) => ({
+    textAlign:'left', fontSize:10, fontWeight:700, color:'#3B6B96',
+    letterSpacing:'0.08em', textTransform:'uppercase', padding:'8px 10px',
+    cursor:'pointer', userSelect:'none', whiteSpace:'nowrap',
+    borderBottom:'1px solid #162843',
+  });
+
+  return (
+    <div className="card" style={{ overflow:'hidden' }}>
+      {/* Filters */}
+      <div style={{ padding:'12px 14px', borderBottom:'1px solid #162843',
+        display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+        <input
+          value={filterText}
+          onChange={e => setFilterText(e.target.value)}
+          placeholder="Search findings…"
+          style={{
+            background:'#050C18', border:'1px solid #162843', borderRadius:5,
+            color:'#C9D6E8', fontSize:11, padding:'5px 9px', flex:1, minWidth:140,
+          }}
+        />
+        <select
+          value={filterMod}
+          onChange={e => setFilterMod(e.target.value)}
+          style={{
+            background:'#050C18', border:'1px solid #162843', borderRadius:5,
+            color: filterMod ? '#C9D6E8' : '#3B6B96', fontSize:11, padding:'5px 8px',
+          }}
+        >
+          <option value="">All modules</option>
+          {modules.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+        <div style={{ display:'flex', gap:4 }}>
+          {SEV_ORDER.map(s => (
+            <button key={s} onClick={() => setFilterSev(p => p.includes(s) ? p.filter(x => x!==s) : [...p,s])}
+              style={{
+                fontSize:9, padding:'3px 7px', borderRadius:4, fontWeight:700,
+                background: filterSev.includes(s) ? sevColors[s]+'33' : 'transparent',
+                border: `1px solid ${filterSev.includes(s) ? sevColors[s] : '#162843'}`,
+                color: filterSev.includes(s) ? sevColors[s] : '#2A4D73',
+                cursor:'pointer', fontFamily:'monospace', letterSpacing:'0.04em',
+              }}
+            >{s[0].toUpperCase()}</button>
+          ))}
+        </div>
+        <span style={{ fontSize:10, color:'#2A4D73', marginLeft:'auto', fontVariantNumeric:'tabular-nums' }}>
+          {sorted.length}/{findings.length}
+        </span>
+      </div>
+
+      {/* Table */}
+      <div style={{ overflowX:'auto' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse' }}>
+          <thead>
+            <tr>
+              {[['severity','Severity'],['title','Finding'],['module','Module'],['owasp','OWASP']].map(([k,l]) => (
+                <th key={k} style={thStyle(k)} onClick={() => toggleSort(k)}>
+                  {l}{sortKey===k ? (sortDir===1?' ↑':' ↓') : ''}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.length === 0 && (
+              <tr><td colSpan={4} style={{ padding:'30px', textAlign:'center', color:'#2A4D73', fontSize:12 }}>
+                No findings match the current filter
+              </td></tr>
+            )}
+            {sorted.map((f, i) => {
+              const id = `${f.severity}|${f.title}|${i}`;
+              const expanded = expandedId === id;
+              return (
+                <React.Fragment key={id}>
+                  <tr
+                    onClick={() => setExpandedId(expanded ? null : id)}
+                    style={{
+                      cursor:'pointer',
+                      background: expanded ? '#0F1F3D' : i%2===0 ? 'transparent' : '#08111F',
+                      borderLeft:`3px solid ${expanded ? sevColors[f.severity?.toLowerCase()]||'#2A4D73' : 'transparent'}`,
+                    }}
+                  >
+                    <td style={{ padding:'8px 10px' }}><SevBadge sev={f.severity} small/></td>
+                    <td style={{ padding:'8px 10px', fontSize:12, color:'#C9D6E8', maxWidth:360 }}>
+                      <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                        {f.title}
+                      </div>
+                    </td>
+                    <td style={{ padding:'8px 10px', fontSize:11, color:'#5B7FA6', fontFamily:'monospace', whiteSpace:'nowrap' }}>{f.module||'—'}</td>
+                    <td style={{ padding:'8px 10px', fontSize:10, color:'#3B6B96', maxWidth:220 }}>
+                      <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{f.owasp||'—'}</div>
+                    </td>
+                  </tr>
+                  {expanded && (
+                    <tr style={{ background:'#0A1628' }}>
+                      <td colSpan={4} style={{ padding:'0 14px 14px' }}>
+                        <div className="fade-in" style={{
+                          background:'#050C18', borderRadius:6, padding:'14px',
+                          borderLeft:`3px solid ${sevColors[f.severity?.toLowerCase()]||'#2A4D73'}`,
+                        }}>
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+                            <div>
+                              <div style={{ fontSize:10, color:'#3B6B96', fontWeight:700, marginBottom:4, letterSpacing:'0.06em', textTransform:'uppercase' }}>Detail</div>
+                              <div style={{ fontSize:12, color:'#C9D6E8', lineHeight:1.6 }}>{f.detail||'—'}</div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize:10, color:'#3B6B96', fontWeight:700, marginBottom:4, letterSpacing:'0.06em', textTransform:'uppercase' }}>Remediation</div>
+                              <div style={{ fontSize:12, color:'#22C55E', lineHeight:1.6 }}>{f.remediation||'—'}</div>
+                            </div>
+                          </div>
+                          {f.mitre && (
+                            <div style={{ marginTop:10, fontSize:10, color:'#5B7FA6' }}>
+                              <span style={{ color:'#2A4D73', marginRight:6, fontWeight:700 }}>MITRE:</span>
+                              <span style={{ fontFamily:'monospace' }}>{f.mitre}</span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Results view ───────────────────────────────────────────────────────────────
+function ResultsView({ scanId, history }) {
+  const [data, setData] = useState(null);
+  const [tab, setTab] = useState('findings');
+
+  useEffect(() => {
+    setData(null);
+    api.getResults(scanId).then(setData).catch(() => {});
+  }, [scanId]);
+
+  if (!data) return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:200, color:'#3B6B96' }}>
+      Loading results…
+    </div>
+  );
+
+  const sc = data.severity_counts || {};
+  const total = SEV_ORDER.reduce((a,s) => a+(sc[s]||0), 0);
+  const duration = fmtDuration(data.started_at, data.finished_at);
+
+  return (
+    <div className="fade-in" style={{ padding:'20px', maxWidth:1100, margin:'0 auto' }}>
+      {/* Summary row */}
+      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
+        {[
+          { label:'Total', value:total, color:'#1E88E5' },
+          ...SEV_ORDER.filter(s => sc[s]).map(s => ({ label:s.charAt(0).toUpperCase()+s.slice(1), value:sc[s], color:sevColors[s] })),
+        ].map(c => (
+          <div key={c.label} className="card" style={{
+            padding:'12px 18px', flex:'1 1 100px', minWidth:90,
+            borderTop:`3px solid ${c.color}`,
+          }}>
+            <div style={{ fontSize:24, fontWeight:700, color:c.color, fontVariantNumeric:'tabular-nums' }}>{c.value}</div>
+            <div style={{ fontSize:11, color:'#3B6B96', marginTop:2 }}>{c.label}</div>
+          </div>
+        ))}
+        <div className="card" style={{ padding:'12px 18px', flex:'1 1 120px', minWidth:120 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:'#C9D6E8', fontFamily:'monospace',
+            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{data.target}</div>
+          <div style={{ fontSize:10, color:'#3B6B96', marginTop:2 }}>
+            {duration && `${duration} • `}{fmtDate(data.started_at)}
+            {data.active && <span style={{ color:'#F97316', marginLeft:6 }}>⚡ active</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* Export bar */}
+      <div style={{ display:'flex', gap:8, marginBottom:16, justifyContent:'flex-end' }}>
+        <a href={`${API}/api/export/${scanId}/json`} target="_blank" rel="noreferrer">
+          <button style={{
+            background:'transparent', border:'1px solid #1E3A5A', borderRadius:6,
+            color:'#5B7FA6', fontSize:11, padding:'6px 14px', cursor:'pointer',
+          }}>↓ JSON</button>
+        </a>
+        <a href={`${API}/api/export/${scanId}/pdf`} target="_blank" rel="noreferrer">
+          <button style={{
+            background:'linear-gradient(135deg, #1E88E5, #1565C0)',
+            border:'none', borderRadius:6,
+            color:'#fff', fontSize:11, padding:'6px 14px', cursor:'pointer',
+            fontWeight:700,
+          }}>↓ PDF Report</button>
+        </a>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:'flex', gap:0, borderBottom:'1px solid #162843', marginBottom:16 }}>
+        {[['findings','Findings'], ['charts','Charts'], ['map','Threat Map'], ['modules','Modules']].map(([k,l]) => (
+          <button key={k} onClick={() => setTab(k)} style={{
+            background:'none', border:'none', borderBottom:`2px solid ${tab===k?'#1E88E5':'transparent'}`,
+            color: tab===k ? '#42A5F5' : '#3B6B96', cursor:'pointer',
+            fontSize:12, fontWeight: tab===k ? 700 : 400, padding:'8px 16px',
+            marginBottom:-1, transition:'color 0.15s',
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {tab === 'findings' && <FindingsTable findings={data.findings||[]}/>}
+
+      {tab === 'charts' && (
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+          <SeverityDonut counts={sc}/>
+          <OWASPChart findings={data.findings||[]}/>
+          <div style={{ gridColumn:'1/-1' }}>
+            <TrendChart history={history} target={data.target}/>
+          </div>
+        </div>
+      )}
+
+      {tab === 'map' && <ThreatMap findings={data.findings||[]}/>}
+      {tab === 'modules' && <ModulePanel modules={data.modules||{}}/>}
+    </div>
+  );
+}
+
+// ─── Compare view ───────────────────────────────────────────────────────────────
+function CompareView({ ids, onCancel }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [tab, setTab] = useState('new');
+
+  useEffect(() => {
+    if (ids.length < 2) return;
+    api.compare(ids[0], ids[1]).then(setData).catch(e => setError('Failed to compare scans'));
+  }, [ids]);
+
+  if (ids.length < 2) return (
+    <div style={{ padding:30, textAlign:'center', color:'#3B6B96', fontSize:13 }}>
+      Select exactly 2 scans from the sidebar to compare.
+      <br/><button onClick={onCancel} style={{ marginTop:12, background:'none', border:'1px solid #162843',
+        borderRadius:6, color:'#5B7FA6', padding:'6px 16px', cursor:'pointer', fontSize:12 }}>← Back</button>
+    </div>
+  );
+  if (error) return <div style={{ padding:20, color:'#EF4444' }}>{error}</div>;
+  if (!data) return <div style={{ padding:20, color:'#3B6B96' }}>Loading comparison…</div>;
+
+  const { scan_a, scan_b, new_in_b, resolved_in_b, common_count, severity_delta } = data;
+
+  return (
+    <div className="fade-in" style={{ padding:20, maxWidth:1100, margin:'0 auto' }}>
+      {/* Header */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', gap:14, marginBottom:16, alignItems:'center' }}>
+        <div className="card" style={{ padding:'12px 16px' }}>
+          <div style={{ fontSize:10, color:'#3B6B96', marginBottom:3, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase' }}>Scan A (baseline)</div>
+          <div style={{ fontSize:13, fontFamily:'monospace', color:'#C9D6E8' }}>{scan_a.target}</div>
+          <div style={{ fontSize:10, color:'#3B6B96' }}>{fmtDate(scan_a.started_at)}</div>
+        </div>
+        <div style={{ fontSize:24, color:'#2A4D73', textAlign:'center' }}>→</div>
+        <div className="card" style={{ padding:'12px 16px', borderTop:'2px solid #1E88E5' }}>
+          <div style={{ fontSize:10, color:'#1E88E5', marginBottom:3, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase' }}>Scan B (current)</div>
+          <div style={{ fontSize:13, fontFamily:'monospace', color:'#C9D6E8' }}>{scan_b.target}</div>
+          <div style={{ fontSize:10, color:'#3B6B96' }}>{fmtDate(scan_b.started_at)}</div>
+        </div>
+      </div>
+
+      {/* Delta tiles */}
+      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
+        {SEV_ORDER.map(s => {
+          const d = severity_delta[s]||0;
+          return (
+            <div key={s} className="card" style={{ flex:'1 1 80px', padding:'10px 14px', minWidth:80 }}>
+              <div style={{
+                fontSize:18, fontWeight:700, fontVariantNumeric:'tabular-nums',
+                color: d>0 ? '#EF4444' : d<0 ? '#22C55E' : '#2A4D73',
+              }}>{d>0?'+':''}{d}</div>
+              <div style={{ fontSize:10, color: sevColors[s], fontWeight:700, marginTop:2 }}>
+                {s.charAt(0).toUpperCase()+s.slice(1)}
+              </div>
+            </div>
+          );
+        })}
+        <div className="card" style={{ flex:'1 1 100px', padding:'10px 14px', minWidth:100 }}>
+          <div style={{ fontSize:18, fontWeight:700, color:'#5B7FA6', fontVariantNumeric:'tabular-nums' }}>{common_count}</div>
+          <div style={{ fontSize:10, color:'#3B6B96', marginTop:2 }}>Unchanged</div>
+        </div>
+      </div>
+
+      {/* Diff tabs */}
+      <div style={{ display:'flex', gap:0, borderBottom:'1px solid #162843', marginBottom:14 }}>
+        {[
+          ['new', `New (${new_in_b.length})`, '#EF4444'],
+          ['resolved', `Resolved (${resolved_in_b.length})`, '#22C55E'],
+        ].map(([k,l,c]) => (
+          <button key={k} onClick={() => setTab(k)} style={{
+            background:'none', border:'none', borderBottom:`2px solid ${tab===k?c:'transparent'}`,
+            color: tab===k ? c : '#3B6B96', cursor:'pointer',
+            fontSize:12, fontWeight: tab===k ? 700 : 400, padding:'8px 16px', marginBottom:-1,
+          }}>{l}</button>
+        ))}
+      </div>
+
+      <FindingsTable findings={tab==='new' ? new_in_b : resolved_in_b}/>
+
+      <div style={{ marginTop:14, textAlign:'right' }}>
+        <button onClick={onCancel} style={{
+          background:'none', border:'1px solid #162843', borderRadius:6,
+          color:'#5B7FA6', fontSize:11, padding:'6px 14px', cursor:'pointer',
+        }}>← Back to results</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Traffic Analyzer ────────────────────────────────────────────────────────────
+// Client-side IDOR candidate detection. No backend involved.
+
+const TA_TRACKING_NOISE = [
+  'doubleclick.net','google-analytics.com','googletagmanager.com','googlesyndication.com',
+  'facebook.net','linkedin.com','pinterest.com','bing.com','adsrvr.org','snapchat.com',
+  'reddit.com','optimizely.com','zoom.us','cookielaw.org',
+];
+
+const TA_SENSITIVE_KEYWORDS = [
+  'user','account','profile','admin','ssn','tax','payment','billing','order','invoice',
+  'document','file','download','export','report','email','password','basicinfo','fields',
+  'settings','preferences',
+];
+
+// Words that, when directly followed by a numeric segment, signal a resource/{id} route
+const TA_RESOURCE_WORDS = [
+  'user','account','profile','order','invoice','document','file','report','payment',
+  'billing','customer','member','card','transaction','return','tax',
+];
+
+const TA_UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+const TA_URL_RE = /https?:\/\/[^\s"'<>)\]}]+/gi;
+const TA_RISK_COLORS = { HIGH:'#EF4444', MEDIUM:'#EAB308', LOW:'#22C55E' };
+
+const TA_EXAMPLE = [
+  'https://www.taxact.com/api/user/550976791/basicinfo',
+  'https://www.taxact.com/api/user/550976791/fields',
+  'https://www.taxact.com/api/account/12345/settings',
+  'https://www.taxact.com/return/2023/download?document_id=98765',
+  'https://www.taxact.com/api/v2/profile/8f14e45f-ceea-467d-9a3e-1b2c3d4e5f60',
+  'https://www.taxact.com/billing/invoice/44821/export',
+  'https://www.taxact.com/api/user/profile?user_id=550976791&order_id=7781',
+  'https://www.taxact.com/tax/report/2023/summary',
+  'GET https://www.taxact.com/api/user/550976792/basicinfo HTTP/1.1',
+  'https://securepubads.g.doubleclick.net/gampad/ads?correlator=123456',
+  'https://www.google-analytics.com/collect?tid=UA-000000&cid=987654',
+  'https://px.ads.linkedin.com/collect?pid=99&time=1700000000',
+  'https://www.taxact.com/about/contact',
+].join('\n');
+
+function taExtractUrls(text) {
+  const urls = [];
+  (text || '').split(/\r?\n/).forEach(line => {
+    const matches = line.match(TA_URL_RE);
+    if (matches) matches.forEach(u => urls.push(u.replace(/[.,;]+$/, '')));
+  });
+  return urls;
+}
+
+function taIsNoise(url) {
+  let host = '';
+  try { host = new URL(url).hostname.toLowerCase(); } catch (e) { return false; }
+  return TA_TRACKING_NOISE.some(n => host === n || host.endsWith('.' + n));
+}
+
+function taIsIdParam(name) {
+  const n = name.toLowerCase();
+  if (['id','uid','guid','uuid','userid','accountid','orderid'].includes(n)) return true;
+  if (/_id$/i.test(name)) return true;   // user_id, account_id, order_id
+  if (/Id$/.test(name)) return true;     // camelCase userId
+  return false;
+}
+
+function taAnalyzeOne(url) {
+  let u;
+  try { u = new URL(url); } catch (e) { return null; }
+  const path = u.pathname;
+  const detections = [];
+  let score = 0;
+
+  // Numeric ID in path (4+ digits)
+  const numMatch = path.match(/\/(\d{4,})(?=\/|$)/);
+  if (numMatch) { detections.push('Numeric ID in path: ' + numMatch[1]); score += 3; }
+
+  // UUID in path
+  const uuidMatch = path.match(TA_UUID_RE);
+  if (uuidMatch) { detections.push('UUID in path: ' + uuidMatch[0]); score += 3; }
+
+  // ID-like query parameters
+  const idParams = [];
+  u.searchParams.forEach((v, k) => { if (taIsIdParam(k)) idParams.push(k + '=' + v); });
+  if (idParams.length) { detections.push('ID-like query parameter: ' + idParams.join(', ')); score += 3; }
+
+  // Resource path with numeric ID (e.g. /user/123, /account/456)
+  const segs = path.split('/').filter(Boolean);
+  for (let i = 0; i < segs.length - 1; i++) {
+    if (TA_RESOURCE_WORDS.includes(segs[i].toLowerCase()) && /^\d+$/.test(segs[i + 1])) {
+      detections.push('Resource path with numeric ID: /' + segs[i] + '/' + segs[i + 1]);
+      score += 2;
+      break;
+    }
+  }
+
+  // Sensitive keywords in path
+  const lowerPath = path.toLowerCase();
+  const keywords = TA_SENSITIVE_KEYWORDS.filter(k => lowerPath.includes(k));
+  score += keywords.length;
+
+  if (score === 0) return null;
+
+  const risk = score >= 6 ? 'HIGH' : score >= 3 ? 'MEDIUM' : 'LOW';
+
+  // Dedup pattern: replace UUIDs and numeric IDs with {id}
+  const patternPath = path.replace(new RegExp(TA_UUID_RE, 'g'), '{id}').replace(/\d{2,}/g, '{id}');
+  const paramKeys = [...u.searchParams.keys()].sort().join('&');
+  const pattern = u.hostname + patternPath + (paramKeys ? '?' + paramKeys : '');
+
+  return { url, risk, score, detections, keywords, pattern };
+}
+
+function taAnalyzeTraffic(text) {
+  const urls = taExtractUrls(text);
+  const seenUrl = new Set();
+  const byPattern = new Map();
+
+  urls.forEach(url => {
+    if (seenUrl.has(url)) return;
+    seenUrl.add(url);
+    if (taIsNoise(url)) return;
+    const r = taAnalyzeOne(url);
+    if (!r) return;
+    const existing = byPattern.get(r.pattern);
+    if (!existing) {
+      byPattern.set(r.pattern, Object.assign({}, r, { count: 1 }));
+    } else {
+      existing.count += 1;
+      if (r.score > existing.score) {
+        existing.url = r.url; existing.score = r.score; existing.risk = r.risk;
+        existing.detections = r.detections; existing.keywords = r.keywords;
+      }
+    }
+  });
+
+  const order = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+  const candidates = [...byPattern.values()]
+    .sort((a, b) => order[a.risk] - order[b.risk] || b.score - a.score);
+
+  const summary = {
+    total: candidates.length,
+    high: candidates.filter(c => c.risk === 'HIGH').length,
+    medium: candidates.filter(c => c.risk === 'MEDIUM').length,
+    low: candidates.filter(c => c.risk === 'LOW').length,
+  };
+  return { candidates, summary };
+}
+
+function TrafficCandidateCard({ c }) {
+  const [copied, setCopied] = useState(false);
+  const color = TA_RISK_COLORS[c.risk];
+
+  const copy = () => {
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(c.url).then(done).catch(done);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = c.url; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta); done();
+    }
+  };
+
+  return (
+    <div className="card fade-in" style={{ padding:'14px 16px', borderLeft:`3px solid ${color}` }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+        <span style={{
+          background: color, color:'#fff', fontSize:11, fontWeight:700,
+          padding:'2px 9px', borderRadius:4, fontFamily:'monospace', letterSpacing:'0.05em', flexShrink:0,
+        }}>{c.risk}</span>
+        <span style={{ fontSize:10, color:'#3B6B96', fontFamily:'monospace' }}>score {c.score}</span>
+        {c.count > 1 && (
+          <span style={{ fontSize:10, color:'#5B7FA6' }}>×{c.count} similar</span>
+        )}
+        <button onClick={copy} style={{
+          marginLeft:'auto', flexShrink:0,
+          background: copied ? '#22C55E22' : 'transparent',
+          border:`1px solid ${copied ? '#22C55E' : '#1E3A5A'}`, borderRadius:5,
+          color: copied ? '#22C55E' : '#5B7FA6', fontSize:11, padding:'4px 10px', cursor:'pointer',
+        }}>{copied ? '✓ Copied' : 'Copy URL'}</button>
+      </div>
+
+      <div style={{
+        fontSize:12, color:'#C9D6E8', fontFamily:'monospace', wordBreak:'break-all',
+        marginBottom: (c.detections.length || c.keywords.length) ? 8 : 0,
+      }}>{c.url}</div>
+
+      {c.detections.length > 0 && (
+        <div style={{ display:'flex', flexDirection:'column', gap:3, marginBottom: c.keywords.length ? 8 : 0 }}>
+          {c.detections.map((d, i) => (
+            <div key={i} style={{ fontSize:11, color:'#42A5F5', display:'flex', gap:6 }}>
+              <span style={{ color:'#2A4D73' }}>▸</span>{d}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {c.keywords.length > 0 && (
+        <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+          <span style={{ fontSize:10, color:'#3B6B96', fontWeight:700, letterSpacing:'0.05em', textTransform:'uppercase' }}>
+            Keywords
+          </span>
+          {c.keywords.map(k => (
+            <span key={k} style={{
+              fontSize:10, color:'#EAB308', fontFamily:'monospace',
+              background:'#EAB30818', border:'1px solid #EAB30833', borderRadius:4, padding:'1px 6px',
+            }}>{k}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrafficAnalyzerView() {
+  const [text, setText] = useState('');
+  const [result, setResult] = useState(null);
+
+  const analyze = () => setResult(taAnalyzeTraffic(text));
+  const clear = () => { setText(''); setResult(null); };
+  const loadExample = () => { setText(TA_EXAMPLE); setResult(null); };
+
+  return (
+    <div className="fade-in" style={{ maxWidth:900, margin:'28px auto', padding:'0 20px' }}>
+      {/* Intro */}
+      <div style={{ marginBottom:18 }}>
+        <h1 style={{ fontSize:22, fontWeight:700, color:'#E2E8F0', margin:'0 0 6px' }}>Traffic Analyzer</h1>
+        <p style={{ fontSize:13, color:'#3B6B96', margin:0 }}>
+          Paste captured traffic, extract endpoints, and surface IDOR candidates instantly — runs entirely in your browser.
+        </p>
+      </div>
+
+      {/* Input card */}
+      <div className="card" style={{ padding:20 }}>
+        <label style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+          textTransform:'uppercase', display:'block', marginBottom:8 }}>Raw Traffic</label>
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          rows={15}
+          placeholder="Paste URLs, Burp HTTP History, or raw request data here..."
+          style={{
+            width:'100%', resize:'vertical',
+            background:'#050C18', border:'1.5px solid #1E3A5A', borderRadius:8,
+            color:'#E2E8F0', fontSize:12.5, lineHeight:1.6, padding:'12px 14px',
+            fontFamily:"'Courier New', Courier, monospace",
+          }}
+        />
+
+        <div style={{ display:'flex', gap:8, marginTop:14, flexWrap:'wrap', alignItems:'center' }}>
+          <button
+            onClick={analyze}
+            style={{
+              background:'linear-gradient(135deg, #1E88E5, #1565C0)', border:'none', borderRadius:8,
+              color:'#fff', fontSize:14, fontWeight:700, padding:'11px 22px', cursor:'pointer',
+              letterSpacing:'0.03em', boxShadow:'0 4px 15px #1E88E530',
+            }}
+          >→ Analyze Traffic</button>
+          <button onClick={loadExample} style={{
+            background:'transparent', border:'1px solid #1E3A5A', borderRadius:8,
+            color:'#5B7FA6', fontSize:12, padding:'11px 16px', cursor:'pointer',
+          }}>Load Example</button>
+          <button onClick={clear} style={{
+            background:'transparent', border:'1px solid #1E3A5A', borderRadius:8,
+            color:'#5B7FA6', fontSize:12, padding:'11px 16px', cursor:'pointer',
+          }}>Clear</button>
+        </div>
+      </div>
+
+      {/* Results */}
+      {result && (
+        <div style={{ marginTop:20 }}>
+          {/* Summary bar */}
+          <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
+            {[
+              { label:'Candidates', value:result.summary.total, color:'#1E88E5' },
+              { label:'High',   value:result.summary.high,   color:TA_RISK_COLORS.HIGH },
+              { label:'Medium', value:result.summary.medium, color:TA_RISK_COLORS.MEDIUM },
+              { label:'Low',    value:result.summary.low,    color:TA_RISK_COLORS.LOW },
+            ].map(c => (
+              <div key={c.label} className="card" style={{
+                padding:'12px 18px', flex:'1 1 100px', minWidth:90, borderTop:`3px solid ${c.color}`,
+              }}>
+                <div style={{ fontSize:24, fontWeight:700, color:c.color, fontVariantNumeric:'tabular-nums' }}>{c.value}</div>
+                <div style={{ fontSize:11, color:'#3B6B96', marginTop:2 }}>{c.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {result.candidates.length === 0 ? (
+            <div className="card" style={{ padding:'30px', textAlign:'center', color:'#3B6B96', fontSize:13 }}>
+              No IDOR candidates detected in this traffic
+            </div>
+          ) : (
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {result.candidates.map((c, i) => <TrafficCandidateCard key={c.pattern + i} c={c}/>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Phishing Analyzer ───────────────────────────────────────────────────────────
+// Client-side email header authentication + routing analysis. No backend involved.
+
+const PH_VERDICT_COLORS = { GREEN:'#22C55E', YELLOW:'#EAB308', RED:'#EF4444' };
+const PH_VERDICT_LABEL  = { GREEN:'LIKELY LEGITIMATE', YELLOW:'SUSPICIOUS', RED:'LIKELY PHISHING' };
+
+const PH_EXAMPLE = [
+  'Delivered-To: victim@example.com',
+  'Received: from mail.example.com (mail.example.com [10.0.0.5])',
+  '        by mx.example.com with ESMTPS id abc123def456',
+  '        (version=TLS1_2 cipher=ECDHE-RSA-AES128-GCM-SHA256)',
+  '        for <victim@example.com>; Tue, 01 Jul 2026 10:05:42 -0700 (PDT)',
+  'Received: from smtp.sketchy-host.ru (smtp.sketchy-host.ru [185.220.101.44])',
+  '        by mail.example.com with ESMTP id def456ghi789;',
+  '        Tue, 01 Jul 2026 10:05:05 -0700 (PDT)',
+  'Received: from webmail.paypa1-secure.com (unknown [45.137.22.9])',
+  '        by smtp.sketchy-host.ru with SMTP id ghi789jkl012;',
+  '        Tue, 01 Jul 2026 10:03:58 -0700 (PDT)',
+  'Authentication-Results: mx.example.com;',
+  '        spf=fail (sender IP is 45.137.22.9) smtp.mailfrom=alerts@paypa1-secure.com;',
+  '        dkim=fail reason="body hash did not verify" header.d=paypa1-secure.com;',
+  '        dmarc=fail (p=reject) header.from=paypal.com',
+  'Received-SPF: fail (mx.example.com: domain of alerts@paypa1-secure.com does not',
+  '        designate 45.137.22.9 as permitted sender) client-ip=45.137.22.9;',
+  'Return-Path: <bounce@paypa1-secure.com>',
+  'From: "PayPal Security" <alerts@paypal.com>',
+  'Reply-To: <verify@account-check.net>',
+  'To: <victim@example.com>',
+  'Subject: Urgent: Your account has been limited - verify within 24 hours',
+  'Date: Tue, 01 Jul 2026 10:03:55 -0700',
+  'Message-ID: <9f83kd0293@paypa1-secure.com>',
+  'X-Mailer: PHPMailer 6.1.7 (https://github.com/PHPMailer/PHPMailer)',
+  'X-Priority: 1 (Highest)',
+  'MIME-Version: 1.0',
+  'Content-Type: text/html; charset=UTF-8',
+].join('\n');
+
+function phParseHeaders(raw) {
+  const lines = (raw || '').split(/\r?\n/);
+  const headers = [];
+  let cur = null;
+  for (const line of lines) {
+    if (/^[ \t]/.test(line) && cur) {
+      cur.value += ' ' + line.trim();
+    } else {
+      const m = line.match(/^([^\s:]+):[ \t]?(.*)$/);
+      if (m) { cur = { name: m[1], value: m[2] }; headers.push(cur); }
+    }
+  }
+  return headers;
+}
+
+const phGetAll = (headers, name) =>
+  headers.filter(h => h.name.toLowerCase() === name.toLowerCase()).map(h => h.value);
+const phGetFirst = (headers, name) => {
+  const v = phGetAll(headers, name);
+  return v.length ? v[0] : null;
+};
+
+function phParseAddress(v) {
+  if (!v) return null;
+  const m = v.match(/(?:"?([^"<]*?)"?\s*)?<([^>]+)>/);
+  if (m) return { name: (m[1] || '').trim(), email: m[2].trim() };
+  const bare = v.trim().replace(/^<|>$/g, '');
+  return { name: '', email: bare };
+}
+const phDomain = (email) => {
+  if (!email) return '';
+  const i = email.lastIndexOf('@');
+  return i >= 0 ? email.slice(i + 1).toLowerCase().replace(/[>;].*$/, '').trim() : '';
+};
+
+function phParseReceived(value) {
+  const server =
+    (value.match(/from\s+([^\s;()]+)/i) || [])[1] ||
+    (value.match(/by\s+([^\s;()]+)/i) || [])[1] || 'unknown';
+  const ip =
+    (value.match(/[\[(]((?:\d{1,3}\.){3}\d{1,3})[\])]/) || [])[1] ||
+    (value.match(/[\[(]([0-9a-fA-F:]{3,})[\])]/) || [])[1] || null;
+  const semi = value.lastIndexOf(';');
+  const tsRaw = semi >= 0 ? value.slice(semi + 1).replace(/\([^)]*\)/g, '').trim() : null;
+  let date = null;
+  if (tsRaw) { const d = new Date(tsRaw); if (!isNaN(d.getTime())) date = d; }
+  const tls = (value.match(/version=(TLS[0-9._]+)/i) || [])[1] ||
+    (/\bTLS[0-9._]*\b/i.test(value) ? (value.match(/\bTLS[0-9._]*\b/i) || [])[0] : null);
+  const proto = (value.match(/with\s+(ESMTPSA?|ESMTPS|ESMTPA?|ESMTP|SMTPS?|LMTP|HTTPS?)/i) || [])[1] || null;
+  return { server, ip, tsRaw, date, tls, proto, raw: value };
+}
+
+function phExtractAuth(headers) {
+  const authText = [
+    ...phGetAll(headers, 'Authentication-Results'),
+    ...phGetAll(headers, 'ARC-Authentication-Results'),
+    ...phGetAll(headers, 'Received-SPF').map(v => 'spf=' + v),
+  ].join(' ; ');
+
+  const pick = (re) => { const m = authText.match(re); return m ? m[1].toLowerCase() : null; };
+  const spf = pick(/spf=(pass|fail|softfail|neutral|none|temperror|permerror)/i);
+  const dkim = pick(/dkim=(pass|fail|none|neutral|temperror|permerror)/i);
+  const dmarc = pick(/dmarc=(pass|fail|none|bestguesspass)/i);
+
+  const ip =
+    (authText.match(/client-ip=([0-9a-fA-F:.]+)/i) || [])[1] ||
+    (authText.match(/sender IP is\s+([0-9a-fA-F:.]+)/i) || [])[1] || null;
+  const mailfrom = (authText.match(/smtp\.mailfrom=([^\s;)]+)/i) || [])[1] || null;
+  const policy = (authText.match(/\bp=(none|quarantine|reject)/i) || [])[1] || null;
+  const bodyHashFail = dkim === 'fail' && /body\s*hash/i.test(authText);
+  const headerFrom = (authText.match(/header\.from=([^\s;)]+)/i) || [])[1] || null;
+
+  return { spf, dkim, dmarc, ip, mailfrom, policy, bodyHashFail, headerFrom };
+}
+
+function phAnalyze(raw) {
+  const headers = phParseHeaders(raw);
+  if (!headers.length) return null;
+
+  const auth = phExtractAuth(headers);
+
+  // Route (chronological = received headers reversed)
+  const received = phGetAll(headers, 'Received').map(phParseReceived).reverse();
+  const hops = received.map((h, i) => {
+    let delaySec = null;
+    if (i > 0 && h.date && received[i - 1].date) {
+      delaySec = Math.round((h.date - received[i - 1].date) / 1000);
+    }
+    return { ...h, delaySec, unusualDelay: delaySec != null && delaySec > 30 };
+  });
+
+  // Sender analysis
+  const from = phParseAddress(phGetFirst(headers, 'From'));
+  const returnPath = phParseAddress(phGetFirst(headers, 'Return-Path'));
+  const replyTo = phParseAddress(phGetFirst(headers, 'Reply-To'));
+  const fromDom = from ? phDomain(from.email) : '';
+  const rpDom = returnPath ? phDomain(returnPath.email) : '';
+  const replyDom = replyTo ? phDomain(replyTo.email) : '';
+  const mailfromDom = auth.mailfrom ? phDomain(auth.mailfrom) : '';
+
+  const domainMismatch = fromDom && rpDom && fromDom !== rpDom;
+  const mailfromMismatch = fromDom && mailfromDom && fromDom !== mailfromDom;
+  const replyToDiff = replyDom && fromDom && replyDom !== fromDom;
+
+  // Display-name embeds a different domain than the actual sender
+  let displayNameMismatch = false;
+  if (from && from.name) {
+    const dm = from.name.match(/([a-z0-9-]+\.[a-z]{2,})/i);
+    if (dm && fromDom && dm[1].toLowerCase() !== fromDom) displayNameMismatch = true;
+  }
+
+  // Lookalike / typosquat: digits embedded inside an otherwise-alpha brand domain
+  const lookalikeDomains = [...new Set([fromDom, rpDom, mailfromDom, replyDom].filter(Boolean))]
+    .filter(d => /[a-z][0-9]|[0-9][a-z]/.test(d.split('.')[0]));
+  const lookalike = lookalikeDomains.length > 0;
+
+  // Suspicious X-headers
+  const suspiciousX = [];
+  const xMailer = phGetFirst(headers, 'X-Mailer');
+  if (xMailer && /phpmailer|x-php|sendmail|swiftmailer/i.test(xMailer))
+    suspiciousX.push('X-Mailer: ' + xMailer);
+  const xPriority = phGetFirst(headers, 'X-Priority');
+  if (xPriority && /^\s*1\b/.test(xPriority)) suspiciousX.push('X-Priority: ' + xPriority + ' (forced high priority)');
+  if (phGetFirst(headers, 'X-PHP-Originating-Script'))
+    suspiciousX.push('X-PHP-Originating-Script present (sent from a PHP script)');
+
+  // ── Red flags ──────────────────────────────────────────────────────────────
+  const flags = [];
+  const add = (sev, text) => flags.push({ sev, text });
+
+  if (domainMismatch) add('high', `From domain (${fromDom}) does not match Return-Path domain (${rpDom})`);
+  if (mailfromMismatch) add('high', `From domain (${fromDom}) does not match envelope sender (${mailfromDom})`);
+  if (lookalike) add('high', `Lookalike/typosquat domain detected: ${lookalikeDomains.join(', ')}`);
+  if (auth.spf === 'fail') add('high', 'SPF check failed — sending IP is not authorized for the sender domain');
+  else if (auth.spf === 'softfail') add('medium', 'SPF softfail — sending IP is not clearly authorized');
+  if (auth.dkim === 'fail') add('high', auth.bodyHashFail ? 'DKIM failed — body hash did not verify (message body was altered)' : 'DKIM signature failed');
+  if (auth.dmarc === 'fail') add('high', `DMARC failed${auth.policy ? ` (published policy: ${auth.policy})` : ''}`);
+  if (!auth.spf) add('medium', 'No SPF result present in Authentication-Results');
+  if (!auth.dkim) add('medium', 'No DKIM result present in Authentication-Results');
+  if (!auth.dmarc) add('medium', 'No DMARC result present in Authentication-Results');
+  if (replyToDiff) add('medium', `Reply-To domain (${replyDom}) differs from From domain (${fromDom})`);
+  if (displayNameMismatch) add('medium', `From display name references a domain other than ${fromDom}`);
+  suspiciousX.forEach(x => add('low', 'Suspicious header — ' + x));
+  if (hops.length > 5) add('low', `Message passed through ${hops.length} hops (unusually high)`);
+  hops.filter(h => h.unusualDelay).forEach(h =>
+    add('low', `Unusual delay of ${h.delaySec}s before hop via ${h.server}`));
+
+  // ── Verdict ────────────────────────────────────────────────────────────────
+  const failCount = ['spf', 'dkim', 'dmarc'].filter(k => auth[k] === 'fail').length;
+  const missingCount = ['spf', 'dkim', 'dmarc'].filter(k => !auth[k]).length;
+  const allPass = auth.spf === 'pass' && auth.dkim === 'pass' && auth.dmarc === 'pass';
+  const hasHardIndicator = domainMismatch || mailfromMismatch || lookalike;
+
+  let verdict;
+  if (failCount >= 2 || (failCount >= 1 && hasHardIndicator)) verdict = 'RED';
+  else if (allPass && flags.length === 0) verdict = 'GREEN';
+  else if (failCount >= 1 || missingCount > 0 || flags.length > 0) verdict = 'YELLOW';
+  else verdict = 'GREEN';
+
+  return {
+    verdict, auth, hops,
+    sender: { from, returnPath, replyTo, fromDom, rpDom, replyDom, mailfromDom,
+              domainMismatch, mailfromMismatch, replyToDiff, displayNameMismatch },
+    flags, headers, raw,
+  };
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────────
+function PhAuthRow({ label, status, detail, note }) {
+  const pass = status === 'pass';
+  const fail = status === 'fail';
+  const color = pass ? '#22C55E' : fail ? '#EF4444' : '#EAB308';
+  const icon = pass ? '✓' : fail ? '✗' : '!';
+  return (
+    <div style={{ display:'flex', alignItems:'flex-start', gap:12, padding:'12px 14px',
+      background:'#050C18', borderRadius:6, borderLeft:`3px solid ${color}` }}>
+      <span style={{
+        width:22, height:22, borderRadius:11, background:color, color:'#fff',
+        display:'inline-flex', alignItems:'center', justifyContent:'center',
+        fontSize:13, fontWeight:700, flexShrink:0, marginTop:1,
+      }}>{icon}</span>
+      <div style={{ flex:1 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ fontSize:13, fontWeight:700, color:'#E2E8F0', fontFamily:'monospace' }}>{label}</span>
+          <span style={{ fontSize:11, fontWeight:700, color, textTransform:'uppercase', letterSpacing:'0.05em' }}>
+            {status || 'not present'}
+          </span>
+        </div>
+        {detail && <div style={{ fontSize:11, color:'#5B7FA6', marginTop:3 }}>{detail}</div>}
+        {note && <div style={{ fontSize:11, color:'#EF4444', marginTop:3 }}>{note}</div>}
+      </div>
+    </div>
+  );
+}
+
+function PhSectionTitle({ children }) {
+  return (
+    <div style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+      textTransform:'uppercase', marginBottom:12 }}>{children}</div>
+  );
+}
+
+function PhRawHeaders({ raw }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card" style={{ padding:0, overflow:'hidden' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width:'100%', textAlign:'left', background:'none', border:'none', cursor:'pointer',
+        padding:'14px 18px', color:'#3B6B96', fontSize:11, fontWeight:700,
+        letterSpacing:'0.08em', textTransform:'uppercase', display:'flex', alignItems:'center', gap:8,
+      }}>
+        <span>{open ? '▼' : '▶'}</span> Raw Headers
+      </button>
+      {open && (
+        <pre style={{
+          margin:0, padding:'0 18px 16px', overflowX:'auto', fontSize:11.5, lineHeight:1.6,
+          fontFamily:"'Courier New', Courier, monospace", whiteSpace:'pre-wrap', wordBreak:'break-word',
+        }}>
+          {raw.split(/\r?\n/).map((line, i) => {
+            const m = line.match(/^([^\s:][^:]*?):(.*)$/);
+            if (m) return (
+              <div key={i}>
+                <span style={{ color:'#42A5F5' }}>{m[1]}:</span>
+                <span style={{ color:'#C9D6E8' }}>{m[2]}</span>
+              </div>
+            );
+            return <div key={i} style={{ color:'#5B7FA6' }}>{line || ' '}</div>;
+          })}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function PhishingAnalyzerView() {
+  const [text, setText] = useState('');
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  const analyze = () => {
+    const r = phAnalyze(text);
+    if (!r) { setError('No valid email headers found — paste the full headers and try again.'); setResult(null); return; }
+    setError(''); setResult(r);
+  };
+  const clear = () => { setText(''); setResult(null); setError(''); };
+  const loadExample = () => { setText(PH_EXAMPLE); setResult(null); setError(''); };
+
+  const sevColor = { high:'#EF4444', medium:'#EAB308', low:'#64748B' };
+
+  return (
+    <div className="fade-in" style={{ maxWidth:900, margin:'28px auto', padding:'0 20px' }}>
+      <div style={{ marginBottom:18 }}>
+        <h1 style={{ fontSize:22, fontWeight:700, color:'#E2E8F0', margin:'0 0 6px' }}>Phishing Analyzer</h1>
+        <p style={{ fontSize:13, color:'#3B6B96', margin:0 }}>
+          Paste raw email headers to verify SPF/DKIM/DMARC, trace the delivery route, and surface phishing indicators — runs entirely in your browser.
+        </p>
+      </div>
+
+      {/* Input */}
+      <div className="card" style={{ padding:20 }}>
+        <label style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+          textTransform:'uppercase', display:'block', marginBottom:8 }}>Email Headers</label>
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          rows={20}
+          placeholder="Paste full email headers here..."
+          style={{
+            width:'100%', resize:'vertical',
+            background:'#050C18', border:'1.5px solid #1E3A5A', borderRadius:8,
+            color:'#E2E8F0', fontSize:12.5, lineHeight:1.6, padding:'12px 14px',
+            fontFamily:"'Courier New', Courier, monospace",
+          }}
+        />
+        <div style={{ display:'flex', gap:8, marginTop:14, flexWrap:'wrap' }}>
+          <button onClick={analyze} style={{
+            background:'linear-gradient(135deg, #1E88E5, #1565C0)', border:'none', borderRadius:8,
+            color:'#fff', fontSize:14, fontWeight:700, padding:'11px 22px', cursor:'pointer',
+            letterSpacing:'0.03em', boxShadow:'0 4px 15px #1E88E530',
+          }}>→ Analyze Headers</button>
+          <button onClick={loadExample} style={{
+            background:'transparent', border:'1px solid #1E3A5A', borderRadius:8,
+            color:'#5B7FA6', fontSize:12, padding:'11px 16px', cursor:'pointer',
+          }}>Load Example</button>
+          <button onClick={clear} style={{
+            background:'transparent', border:'1px solid #1E3A5A', borderRadius:8,
+            color:'#5B7FA6', fontSize:12, padding:'11px 16px', cursor:'pointer',
+          }}>Clear</button>
+        </div>
+        {error && (
+          <div style={{ marginTop:12, fontSize:12, color:'#EF4444', padding:'8px 12px',
+            background:'#EF444415', borderRadius:6, border:'1px solid #EF444430' }}>{error}</div>
+        )}
+      </div>
+
+      {result && (
+        <div style={{ marginTop:20, display:'flex', flexDirection:'column', gap:16 }}>
+          {/* Verdict banner */}
+          <div style={{
+            padding:'20px 24px', borderRadius:10,
+            background: `${PH_VERDICT_COLORS[result.verdict]}18`,
+            border: `1.5px solid ${PH_VERDICT_COLORS[result.verdict]}`,
+            display:'flex', alignItems:'center', gap:16,
+          }}>
+            <span style={{
+              width:44, height:44, borderRadius:22, flexShrink:0,
+              background: PH_VERDICT_COLORS[result.verdict], color:'#fff',
+              display:'inline-flex', alignItems:'center', justifyContent:'center', fontSize:24, fontWeight:900,
+            }}>{result.verdict === 'GREEN' ? '✓' : result.verdict === 'YELLOW' ? '!' : '✗'}</span>
+            <div>
+              <div style={{ fontSize:22, fontWeight:800, color:PH_VERDICT_COLORS[result.verdict], letterSpacing:'0.02em' }}>
+                {PH_VERDICT_LABEL[result.verdict]}
+              </div>
+              <div style={{ fontSize:12, color:'#5B7FA6', marginTop:2 }}>
+                {result.flags.length} indicator{result.flags.length !== 1 ? 's' : ''} • SPF {result.auth.spf || 'n/a'} · DKIM {result.auth.dkim || 'n/a'} · DMARC {result.auth.dmarc || 'n/a'}
+              </div>
+            </div>
+          </div>
+
+          {/* Authentication results — top priority */}
+          <div className="card" style={{ padding:'16px 18px' }}>
+            <PhSectionTitle>Authentication Results</PhSectionTitle>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              <PhAuthRow label="SPF" status={result.auth.spf}
+                detail={result.auth.ip
+                  ? `Sending IP ${result.auth.ip}${result.auth.spf === 'pass' ? ' is authorized' : result.auth.spf === 'fail' ? ' is NOT authorized for the sender domain' : ''}`
+                  : (result.auth.mailfrom ? `Envelope sender ${result.auth.mailfrom}` : null)}
+              />
+              <PhAuthRow label="DKIM" status={result.auth.dkim}
+                detail={result.auth.dkim === 'pass' ? 'Signature verified' : result.auth.dkim === 'fail' ? 'Signature did not verify' : null}
+                note={result.auth.bodyHashFail ? 'Body hash did not verify — the message body was altered in transit' : null}
+              />
+              <PhAuthRow label="DMARC" status={result.auth.dmarc}
+                detail={result.auth.policy ? `Published policy: p=${result.auth.policy}` : 'No published policy detected'}
+              />
+            </div>
+          </div>
+
+          {/* Email route */}
+          <div className="card" style={{ padding:'16px 18px' }}>
+            <PhSectionTitle>Email Route — {result.hops.length} hop{result.hops.length !== 1 ? 's' : ''} (chronological)</PhSectionTitle>
+            {result.hops.length === 0 ? (
+              <div style={{ fontSize:12, color:'#5B7FA6' }}>No Received headers found.</div>
+            ) : (
+              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                {result.hops.map((h, i) => (
+                  <div key={i}>
+                    {h.delaySec != null && (
+                      <div style={{ fontSize:10, textAlign:'center', margin:'2px 0',
+                        color: h.unusualDelay ? '#EF4444' : '#2A4D73' }}>
+                        ↓ {h.delaySec}s {h.unusualDelay ? '⚠ unusual delay' : ''}
+                      </div>
+                    )}
+                    <div style={{ display:'flex', gap:10, padding:'10px 12px', background:'#050C18',
+                      borderRadius:6, borderLeft:`3px solid ${h.unusualDelay ? '#EF4444' : '#1E3A5A'}` }}>
+                      <span style={{ fontSize:11, color:'#3B6B96', fontVariantNumeric:'tabular-nums', flexShrink:0, marginTop:1 }}>
+                        {i + 1}
+                      </span>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:12, fontWeight:700, color:'#C9D6E8', fontFamily:'monospace',
+                          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{h.server}</div>
+                        <div style={{ fontSize:10.5, color:'#5B7FA6', marginTop:2, display:'flex', gap:10, flexWrap:'wrap' }}>
+                          {h.ip && <span style={{ fontFamily:'monospace' }}>{h.ip}</span>}
+                          {h.proto && <span>{h.proto}</span>}
+                          <span style={{ color: h.tls ? '#22C55E' : '#EAB308' }}>{h.tls ? h.tls.replace('_','.') : 'no TLS'}</span>
+                          {h.tsRaw && <span>{h.tsRaw}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sender analysis */}
+          <div className="card" style={{ padding:'16px 18px' }}>
+            <PhSectionTitle>Sender Analysis</PhSectionTitle>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              {[
+                { label:'From', addr:result.sender.from, flag:result.sender.displayNameMismatch,
+                  flagText:'display name references another domain' },
+                { label:'Return-Path (envelope)', addr:result.sender.returnPath, flag:result.sender.domainMismatch,
+                  flagText:'domain differs from From' },
+                { label:'Envelope sender (smtp.mailfrom)', addr: result.auth.mailfrom ? { name:'', email:result.auth.mailfrom } : null,
+                  flag:result.sender.mailfromMismatch, flagText:'domain differs from From' },
+                { label:'Reply-To', addr:result.sender.replyTo, flag:result.sender.replyToDiff,
+                  flagText:'differs from From — replies go elsewhere' },
+              ].filter(r => r.addr).map((r, i) => (
+                <div key={i} style={{ display:'flex', gap:10, padding:'10px 12px', background:'#050C18', borderRadius:6,
+                  borderLeft:`3px solid ${r.flag ? '#EF4444' : '#1E3A5A'}` }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:10, color:'#3B6B96', fontWeight:700, letterSpacing:'0.05em', textTransform:'uppercase' }}>
+                      {r.label}
+                    </div>
+                    <div style={{ fontSize:12, color:'#C9D6E8', fontFamily:'monospace', marginTop:2, wordBreak:'break-all' }}>
+                      {r.addr.name ? <span style={{ color:'#E2E8F0' }}>{r.addr.name} </span> : null}
+                      <span style={{ color:'#5B7FA6' }}>&lt;{r.addr.email}&gt;</span>
+                    </div>
+                  </div>
+                  {r.flag && (
+                    <span style={{ fontSize:10, color:'#EF4444', flexShrink:0, marginTop:2 }}>⚠ {r.flagText}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Red flags */}
+          <div className="card" style={{ padding:'16px 18px' }}>
+            <PhSectionTitle>Red Flags {result.flags.length > 0 ? `(${result.flags.length})` : ''}</PhSectionTitle>
+            {result.flags.length === 0 ? (
+              <div style={{ fontSize:12, color:'#22C55E' }}>✓ No phishing indicators detected.</div>
+            ) : (
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                {result.flags.map((f, i) => (
+                  <div key={i} style={{ display:'flex', gap:10, alignItems:'flex-start', fontSize:12, color:'#C9D6E8' }}>
+                    <span style={{ width:8, height:8, borderRadius:4, background:sevColor[f.sev],
+                      flexShrink:0, marginTop:5 }}/>
+                    <span style={{ flex:1 }}>{f.text}</span>
+                    <span style={{ fontSize:9, fontWeight:700, color:sevColor[f.sev], textTransform:'uppercase',
+                      letterSpacing:'0.05em', flexShrink:0, marginTop:2 }}>{f.sev}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Raw headers */}
+          <PhRawHeaders raw={result.raw}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Root App ───────────────────────────────────────────────────────────────────
+function App() {
+  const [theme, setTheme] = useState('dark');
+  const [view, setView] = useState('home');
+  const [scanId, setScanId] = useState(null);
+  const [scanTarget, setScanTarget] = useState('');
+  const [scanActive, setScanActive] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [compareMode, setCompareMode] = useState(false);
+  const [selectedForCompare, setSelectedForCompare] = useState([]);
+
+  // Apply theme to body
+  useEffect(() => {
+    document.body.className = theme === 'light' ? 'light' : '';
+  }, [theme]);
+
+  // Load history on mount and refresh after scans
+  const refreshHistory = useCallback(() => {
+    api.getHistory().then(setHistory).catch(() => {});
+  }, []);
+
+  useEffect(() => { refreshHistory(); }, []);
+
+  const handleNav = (dest) => {
+    if (dest === 'home') {
+      setView('home'); setScanId(null); setCompareMode(false); setSelectedForCompare([]);
+    } else {
+      setView(dest);
+    }
+  };
+
+  const handleScanStart = (id, target, active) => {
+    setScanId(id);
+    setScanTarget(target);
+    setScanActive(active);
+    setView('scanning');
+    setSelectedForCompare([]);
+    setCompareMode(false);
+  };
+
+  const handleScanComplete = (id) => {
+    refreshHistory();
+    setScanId(id);
+    setView('results');
+  };
+
+  const handleHistorySelect = (id) => {
+    if (compareMode) {
+      setSelectedForCompare(prev => {
+        if (prev.includes(id)) return prev.filter(x => x !== id);
+        if (prev.length >= 2) return [prev[1], id];
+        return [...prev, id];
+      });
+      return;
+    }
+    const h = history.find(x => x.scan_id === id);
+    if (h) setScanTarget(h.target);
+    setScanId(id);
+    setView(h?.status === 'running' ? 'scanning' : 'results');
+  };
+
+  const handleCompare = () => {
+    if (selectedForCompare.length === 2) setView('compare');
+  };
+
+  const toggleCompareMode = () => {
+    setCompareMode(p => !p);
+    setSelectedForCompare([]);
+  };
+
+  const activeScanId = view === 'compare' ? null : scanId;
+
+  const ctxValue = { theme, toggle: () => setTheme(t => t === 'dark' ? 'light' : 'dark') };
+
+  return (
+    <ThemeCtx.Provider value={ctxValue}>
+      <div style={{
+        display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden',
+        background: theme==='dark' ? '#050C18' : '#F0F4F8',
+      }}>
+        <Header
+          view={view}
+          onBack={() => { setView('home'); setScanId(null); setCompareMode(false); setSelectedForCompare([]); }}
+          onNav={handleNav}
+          scanTarget={scanTarget}
+        />
+
+        <div style={{ display:'flex', flex:1, overflow:'hidden' }}>
+          <Sidebar
+            history={history}
+            onSelect={handleHistorySelect}
+            activeScanId={activeScanId}
+            compareMode={compareMode}
+            selectedForCompare={selectedForCompare}
+            onToggleCompare={toggleCompareMode}
+          />
+
+          <main style={{ flex:1, overflowY:'auto', overflowX:'hidden' }}>
+            {/* Compare launch bar */}
+            {compareMode && selectedForCompare.length === 2 && view !== 'compare' && (
+              <div style={{
+                background:'#0A1628', borderBottom:'1px solid #162843',
+                padding:'8px 20px', display:'flex', alignItems:'center', gap:10,
+              }}>
+                <span style={{ fontSize:11, color:'#C9D6E8' }}>
+                  Comparing: <span style={{ fontFamily:'monospace', color:'#A78BFA' }}>
+                    {selectedForCompare.join(' vs ')}
+                  </span>
+                </span>
+                <button onClick={handleCompare} style={{
+                  background:'#A78BFA', border:'none', borderRadius:5,
+                  color:'#fff', fontSize:11, fontWeight:700, padding:'4px 12px', cursor:'pointer',
+                }}>View Diff →</button>
+              </div>
+            )}
+
+            {view === 'home' && <HomeView onScanStart={handleScanStart}/>}
+            {view === 'traffic' && <TrafficAnalyzerView/>}
+            {view === 'phishing' && <PhishingAnalyzerView/>}
+            {view === 'scanning' && scanId && (
+              <ScanningView
+                scanId={scanId}
+                target={scanTarget}
+                active={scanActive}
+                onComplete={handleScanComplete}
+              />
+            )}
+            {view === 'results' && scanId && <ResultsView scanId={scanId} history={history}/>}
+            {view === 'compare' && (
+              <CompareView
+                ids={selectedForCompare}
+                onCancel={() => { setView('results'); setCompareMode(false); setSelectedForCompare([]); }}
+              />
+            )}
+          </main>
+        </div>
+      </div>
+    </ThemeCtx.Provider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

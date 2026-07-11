@@ -1,0 +1,48 @@
+# BSS Recon Configuration
+# Copy this to config.yaml and fill in your API keys
+
+# API Keys - leave blank to skip that module
+api_keys:
+  shodan: ""           # Free tier: 100 queries/month - https://account.shodan.io
+  virustotal: ""       # Free tier: 500 requests/day - https://virustotal.com
+  securitytrails: ""   # Free tier: 50 queries/month - https://securitytrails.com
+  hunter_io: ""        # Free tier: 25 searches/month - https://hunter.io
+  anthropic: ""        # Optional: AI-powered analysis - https://console.anthropic.com
+
+# Scan settings
+scan:
+  timeout: 10          # Seconds to wait per connection
+  max_subdomains: 500  # Cap subdomain results
+  user_agent: "BSS-Recon/1.0 (Security Assessment)"
+  rate_limit: 1.0      # Seconds between requests (be nice to servers)
+
+# Report settings
+reporting:
+  company_name: "Burgohy Security Solutions"
+  analyst_name: "Emilio Burgohy"
+  report_dir: "./reports"
+  logo_path: ""        # Path to BSS logo for PDF reports
+
+# Output settings
+output:
+  save_json: true      # Auto-save raw results as JSON
+  output_dir: "./output"
+
+# Modules to run by default (override with --modules flag)
+default_modules:
+  - whois
+  - dns
+  - subdomains
+  - ssl
+  - wafdetect
+  - headers
+  - techdetect
+  - webprobe
+  - jsanalyze
+  - dorks
+  - diff
+  - shodan
+  - virustotal
+  - hunter
+  - score
+  # - virustotal      # Uncomment when you add your API key

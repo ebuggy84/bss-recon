@@ -1,0 +1,106 @@
+# BSS Recon - Custom Subdomain Mutation Wordlist
+# Add entries from bug bounty writeups and your own discoveries
+# One prefix per line. Lines starting with # are comments.
+# Format: just the prefix (e.g., "k8s-test" not "k8s-test.target.com")
+#
+# Usage: Every time you read a writeup where someone found a bug on
+# a weirdly named subdomain, add that prefix here. Your platform
+# gets smarter with every bounty you study.
+#
+# === Kubernetes / Container ===
+k8s
+k8s-test
+k8s-staging
+k8s-dev
+kubernetes
+docker
+container
+registry
+harbor
+rancher
+# === CI/CD ===
+ci
+cd
+pipeline
+build
+deploy
+drone
+travis
+circleci
+actions
+artifacts
+# === Cloud Infrastructure ===
+aws
+azure
+gcp
+s3
+bucket
+lambda
+cloudfront
+storage
+blob
+# === Monitoring / Observability ===
+prometheus
+grafana
+kibana
+elastic
+logstash
+datadog
+newrelic
+pagerduty
+alertmanager
+loki
+# === Authentication / SSO ===
+sso
+oauth
+auth0
+keycloak
+identity
+idp
+cas
+saml
+okta
+# === Databases ===
+postgres
+mysql
+mongo
+redis
+elastic
+cassandra
+influx
+memcached
+# === Internal Tools ===
+wiki
+confluence
+slack
+teams
+sharepoint
+onedrive
+drive
+# === VPN / Remote Access ===
+vpn
+remote
+rdp
+ssh
+bastion
+jump
+jumpbox
+# === API Variants ===
+api-gateway
+api-internal
+api-public
+api-private
+api-partner
+api-mobile
+api-legacy
+# === Miscellaneous from writeups ===
+debug
+trace
+metrics
+health
+healthcheck
+readiness
+liveness
+swagger-ui
+redoc
+graphql-playground
