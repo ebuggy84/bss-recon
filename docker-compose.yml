@@ -1,0 +1,29 @@
+# BSS Recon — one-command install
+#
+#   docker compose up --build
+#       → build the image and launch the web dashboard at http://localhost:8000
+#
+#   docker compose run --rm bss-recon python -m bssrecon scan example.com
+#       → run a one-off CLI scan (add --active --accept-roe for active modules,
+#         only against systems you are authorized to test)
+#
+services:
+  bss-recon:
+    build: .
+    image: bss-recon:latest
+    container_name: bss-recon
+    ports:
+      - "8000:8000"                      # web dashboard
+    volumes:
+      - ./output:/app/output                    # raw JSON scan results
+      - ./reports:/app/reports                  # generated PDF / Markdown reports
+      - ./dashboard_output:/app/dashboard_output
+      # To supply your own API keys without rebuilding: copy config.yaml.example
+      # to config.yaml, add your keys, then uncomment the line below.
+      # - ./config.yaml:/app/config.yaml
+    # Active nmap SYN scans need raw sockets. Uncomment if you run authorized
+    # --active scans and hit nmap privilege errors.
+    # cap_add:
+    #   - NET_RAW
+    #   - NET_ADMIN
+    restart: unless-stopped

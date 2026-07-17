@@ -54,6 +54,30 @@ Built and maintained by [Emilio Burgohy](https://github.com/ebuggy84).
 
 ## Quick Start
 
+### Run with Docker (one-command install)
+
+The fastest way to get started — requires only Docker and Docker Compose:
+
+```bash
+git clone https://github.com/ebuggy84/bss-recon.git
+cd bss-recon
+docker compose up --build
+```
+
+Then open **http://localhost:8000** for the web dashboard. The image bundles `nmap` and `nuclei`, so active modules work out of the box; scan results and reports are written to `./output` and `./reports` on your host.
+
+Run a one-off CLI scan inside the container:
+
+```bash
+docker compose run --rm bss-recon python -m bssrecon scan example.com -r
+```
+
+To enable API-key modules (Shodan, VirusTotal, Hunter), copy `config.yaml.example` to `config.yaml`, add your keys, and uncomment the `config.yaml` volume in `docker-compose.yml`.
+
+Prefer a manual Python install instead? Follow the steps below.
+
+---
+
 ### Prerequisites
 
 - Python 3.10+

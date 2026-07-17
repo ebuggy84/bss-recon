@@ -1,0 +1,36 @@
+# Keep the build context small and free of secrets / local state.
+.git
+.gitignore
+
+# Virtualenvs (huge; the image installs its own deps)
+venv/
+.venv/
+env/
+ENV/
+
+# Secrets — never bake a real config into the image
+config.yaml
+.env
+.env.*
+*.pem
+*.key
+
+# Local scan data / reports (mounted as volumes at runtime instead)
+output/
+dashboard_output/
+reports/
+*.log
+
+# Python / editor cruft
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+
+# Backup / patch artifacts
+*.bak
+*.pre-*
