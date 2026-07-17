@@ -126,6 +126,10 @@ tailwind.config = {
   .fade-in { animation: fadeIn 0.3s ease-out; }
   @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
 
+  /* Indeterminate spinning sweep for the per-module scanning gauges */
+  .gauge-spin { transform-box: fill-box; transform-origin: 50% 50%; animation: gaugeSpin 1.1s linear infinite; }
+  @keyframes gaugeSpin { to { transform: rotate(360deg); } }
+
   /* ── Severity text/util colors (referenced by JS classNames) ──── */
   .sev-critical { color: #F87171; }
   .sev-high     { color: #FB923C; }
@@ -178,6 +182,96 @@ tailwind.config = {
   button:focus-visible { outline: 2px solid var(--bss-gold); outline-offset: 2px; }
 
   .tab-active { border-bottom: 2px solid #1E88E5; color: #42A5F5; }
+
+  /* ═══════════════════════════════════════════════════════════════
+     ENTERPRISE SHELL — sidebar nav, top bar, KPIs, data tables
+     ═══════════════════════════════════════════════════════════════ */
+  :root {
+    --elev-1: 0 1px 2px rgba(0,0,0,0.30);
+    --elev-2: 0 4px 14px rgba(0,0,0,0.35);
+    --elev-3: 0 14px 40px rgba(2,8,20,0.55);
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --sidebar-bg: linear-gradient(180deg, #14141F 0%, #0B1220 58%, #081020 100%);
+  }
+
+  /* Left navigation rail */
+  .app-sidebar {
+    width: 244px; flex-shrink: 0;
+    background: var(--sidebar-bg);
+    border-right: 1px solid rgba(184,150,12,0.14);
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 6px 0 26px rgba(0,0,0,0.30);
+  }
+  .sidebar-brand {
+    display: flex; align-items: center; gap: 11px;
+    padding: 16px 16px 15px; border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .sidebar-nav {
+    padding: 12px 10px; display: flex; flex-direction: column; gap: 3px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    padding: 9px 12px; border-radius: 8px; border: none; cursor: pointer;
+    background: transparent; color: #8FA6C4; font-size: 12.5px; font-weight: 600;
+    font-family: inherit; letter-spacing: 0.01em; text-align: left;
+    position: relative; transition: background .18s var(--ease), color .18s ease;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.045); color: #D6E2F2; }
+  .nav-item.active { background: rgba(184,150,12,0.13); color: #F1D98A; }
+  .nav-item.active::before {
+    content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: linear-gradient(180deg, var(--bss-gold), var(--bss-gold-bright));
+  }
+  .nav-item .ico { width: 18px; text-align: center; flex-shrink: 0; opacity: 0.85; font-size: 13px; }
+  .sidebar-section-label {
+    font-size: 10px; font-weight: 700; color: #3B6B96; letter-spacing: 0.12em;
+    text-transform: uppercase; padding: 15px 16px 7px;
+  }
+
+  /* Top bar inside the content column */
+  .topbar {
+    height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 12px;
+    padding: 0 20px; background: rgba(10,20,36,0.72);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid #12233d;
+  }
+
+  /* KPI / metric cards */
+  .stat-card {
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    border-radius: 12px; padding: 16px 18px 15px; box-shadow: var(--elev-2);
+    position: relative; overflow: hidden;
+    transition: transform .25s var(--ease), box-shadow .25s ease, border-color .25s ease;
+  }
+  .stat-card:hover { transform: translateY(-3px); box-shadow: var(--elev-3); border-color: rgba(184,150,12,0.32); }
+  .stat-card .kpi { font-size: 30px; font-weight: 800; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .stat-card .kpi-label { font-size: 11px; color: #5B7FA6; margin-top: 7px; font-weight: 600; letter-spacing: 0.03em; }
+  .stat-card .accent-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+
+  /* Data tables — sticky header, hover rows */
+  .data-table { width: 100%; border-collapse: collapse; }
+  .data-table thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: #0B1A30 !important;
+    border-bottom: 1px solid #1B3050 !important;
+  }
+  .data-table tbody tr { transition: background .12s ease; }
+  .data-table tbody tr:hover { background: rgba(66,165,245,0.08) !important; }
+
+  /* Skeleton loading shimmer */
+  .skeleton { position: relative; overflow: hidden; background: #0E1E38; border-radius: 8px; }
+  .skeleton::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+    transform: translateX(-100%); animation: skel 1.3s infinite;
+  }
+  @keyframes skel { 100% { transform: translateX(100%); } }
+
+  /* Generic card lift helper */
+  .card.elevate { transition: transform .25s var(--ease), box-shadow .25s ease; }
+  .card.elevate:hover { transform: translateY(-2px); box-shadow: var(--elev-3); }
 </style>
 </head>
 <body>
@@ -262,76 +356,41 @@ function fmtDuration(a, b) {
 function Header({ view, onBack, onNav, scanTarget }) {
   const { theme, toggle } = useContext(ThemeCtx);
   const dark = theme === 'dark';
+  const TITLES = {
+    home: 'Security Dashboard', traffic: 'Traffic Analyzer', phishing: 'Phishing Analyzer',
+    scanning: 'Active Scan', results: 'Scan Results', compare: 'Scan Comparison',
+  };
+  const showBack = !['home', 'traffic', 'phishing'].includes(view);
   return (
-    <header className="app-header" style={{
-      background: dark ? '#050C18' : '#0A1628',
-      borderBottom: `1px solid ${dark ? '#162843' : '#1E3A5A'}`,
-      padding: '0 22px',
-      height: 56,
-      display: 'flex',
-      alignItems: 'center',
-      gap: 16,
-      position: 'sticky',
-      top: 0,
-      zIndex: 100,
-    }}>
-      {/* Logo */}
-      <div style={{ display:'flex', alignItems:'center', gap:10, flexShrink:0 }}>
-        <div style={{
-          width: 32, height: 32, borderRadius: 8,
-          background: 'linear-gradient(135deg, #1E88E5, #0D47A1)',
-          display:'flex', alignItems:'center', justifyContent:'center',
-          fontSize: 14, fontWeight: 900, color: '#fff', fontFamily: 'monospace',
-          letterSpacing: '-1px',
-          boxShadow: '0 0 0 1px rgba(184,150,12,0.55), 0 2px 10px rgba(0,0,0,0.4)',
-        }}>BSS</div>
-        <div>
-          <div style={{ fontSize: 13.5, fontWeight: 800, color: '#F1F5FB', lineHeight: 1.15, letterSpacing: '0.01em' }}>BSS Recon</div>
-          <div style={{ fontSize: 9.5, color: '#B8960C', lineHeight: 1.15, fontWeight: 600, letterSpacing: '0.04em' }}>Burgohy Security Solutions</div>
-        </div>
+    <header className="topbar">
+      {showBack && (
+        <button onClick={onBack} style={{
+          background: 'none', border: '1px solid #1B3050', borderRadius: 6, cursor: 'pointer',
+          color: '#8FA6C4', fontSize: 11, padding: '5px 11px',
+          display:'flex', alignItems:'center', gap:5,
+        }}>← Back</button>
+      )}
+      <div style={{ fontSize: 14, fontWeight: 700, color: '#E2E8F0', letterSpacing: '-0.01em' }}>
+        {TITLES[view] || 'Dashboard'}
       </div>
-
-      {/* Primary nav */}
-      <nav style={{ display:'flex', gap:2, marginLeft:6, flexShrink:0 }}>
-        {[['home','Dashboard'],['traffic','Traffic Analyzer'],['phishing','Phishing Analyzer']].map(([k,l]) => {
-          const active = view === k;
-          return (
-            <button key={k} onClick={() => onNav(k)} className={`nav-btn ${active ? 'active' : ''}`} style={{
-              background:'none', border:'none', cursor:'pointer',
-              fontSize:12, fontWeight: active ? 700 : 500,
-              color: active ? '#E4C04A' : '#5B7FA6',
-              padding:'6px 10px', borderRadius:6,
-              transition:'color 0.15s',
-            }}>{l}</button>
-          );
-        })}
-      </nav>
-
-      {/* Breadcrumb */}
-      {!['home','traffic','phishing'].includes(view) && (
-        <div style={{ display:'flex', alignItems:'center', gap: 8, flex: 1 }}>
-          <button onClick={onBack} style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: '#5B7FA6', fontSize: 12, padding: '4px 0',
-            display:'flex', alignItems:'center', gap:4,
-          }}>
-            <span>←</span> Home
-          </button>
-          {scanTarget && (
-            <>
-              <span style={{ color:'#162843' }}>/</span>
-              <span style={{ fontSize: 12, color:'#42A5F5', fontFamily:'monospace' }}>{scanTarget}</span>
-            </>
-          )}
-          {view === 'compare' && (
-            <>
-              <span style={{ color:'#162843' }}>/</span>
-              <span style={{ fontSize: 12, color:'#A78BFA' }}>Comparison</span>
-            </>
-          )}
-        </div>
+      {showBack && scanTarget && (
+        <>
+          <span style={{ color:'#1B3050' }}>/</span>
+          <span style={{ fontSize: 12, color:'#42A5F5', fontFamily:'monospace' }}>{scanTarget}</span>
+        </>
+      )}
+      {view === 'compare' && (
+        <>
+          <span style={{ color:'#1B3050' }}>/</span>
+          <span style={{ fontSize: 12, color:'#A78BFA' }}>Comparison</span>
+        </>
       )}
       <div style={{ flex: 1 }} />
+
+      <span style={{ fontSize: 10, color: '#3B6B96', fontWeight: 600, letterSpacing: '0.05em',
+        display:'flex', alignItems:'center', gap: 7, marginRight: 4 }}>
+        <span className="live-dot" style={{ background:'#22C55E' }}></span> READ-ONLY RECON
+      </span>
 
       {/* Theme toggle */}
       <button onClick={toggle} style={{
@@ -348,28 +407,45 @@ function Header({ view, onBack, onNav, scanTarget }) {
 }
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────────
-function Sidebar({ history, onSelect, activeScanId, compareMode, selectedForCompare, onToggleCompare }) {
+function Sidebar({ view, onNav, history, onSelect, activeScanId, compareMode, selectedForCompare, onToggleCompare }) {
   const { theme } = useContext(ThemeCtx);
   const dark = theme === 'dark';
 
+  const NAV = [
+    ['home', 'Dashboard', '▤'],
+    ['traffic', 'Traffic Analyzer', '⇄'],
+    ['phishing', 'Phishing Analyzer', '✉'],
+  ];
+
   return (
-    <aside style={{
-      width: 220,
-      flexShrink: 0,
-      background: dark ? '#08111F' : '#0A1628',
-      borderRight: `1px solid ${dark ? '#0F1F3D' : '#162843'}`,
-      display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden',
-    }}>
-      <div style={{
-        padding: '12px 14px 8px',
-        borderBottom: '1px solid #0F1F3D',
-        display:'flex', alignItems:'center', justifyContent:'space-between',
-      }}>
-        <span style={{ fontSize:10, fontWeight:700, color:'#3B6B96', letterSpacing:'0.1em', textTransform:'uppercase' }}>
-          Scan History
-        </span>
+    <aside className="app-sidebar">
+      {/* Brand */}
+      <div className="sidebar-brand">
+        <div style={{
+          width: 34, height: 34, borderRadius: 8,
+          background: 'linear-gradient(135deg, #1E88E5, #0D47A1)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          fontSize: 14, fontWeight: 900, color: '#fff', fontFamily: 'monospace', letterSpacing: '-1px',
+          boxShadow: '0 0 0 1px rgba(184,150,12,0.55), 0 2px 10px rgba(0,0,0,0.4)',
+        }}>BSS</div>
+        <div>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: '#F1F5FB', lineHeight: 1.15 }}>BSS Recon</div>
+          <div style={{ fontSize: 9.5, color: '#B8960C', lineHeight: 1.15, fontWeight: 600, letterSpacing: '0.04em' }}>Security Platform</div>
+        </div>
+      </div>
+
+      {/* Primary navigation */}
+      <nav className="sidebar-nav">
+        {NAV.map(([k, l, ico]) => (
+          <button key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => onNav(k)}>
+            <span className="ico" aria-hidden="true">{ico}</span>{l}
+          </button>
+        ))}
+      </nav>
+
+      {/* Scan history */}
+      <div className="sidebar-section-label" style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <span>Scan History</span>
         {history.length >= 2 && (
           <button onClick={onToggleCompare} style={{
             fontSize: 9, padding: '2px 6px', borderRadius: 4,
@@ -383,7 +459,7 @@ function Sidebar({ history, onSelect, activeScanId, compareMode, selectedForComp
         )}
       </div>
 
-      <div style={{ flex:1, overflowY:'auto', padding:'8px 0' }}>
+      <div style={{ flex:1, overflowY:'auto', padding:'2px 0 10px' }}>
         {history.length === 0 && (
           <div style={{ padding:'20px 14px', fontSize:11, color:'#2A4D73', textAlign:'center' }}>
             No scans yet
@@ -450,7 +526,7 @@ const ALL_MODULES = [
   { name:'nuclei',mode:'active' },{ name:'nmap',mode:'active' },{ name:'score',mode:'passive' },
 ];
 
-function HomeView({ onScanStart }) {
+function HomeView({ onScanStart, history }) {
   const { theme } = useContext(ThemeCtx);
   const dark = theme === 'dark';
   const [target, setTarget] = useState('');
@@ -459,6 +535,20 @@ function HomeView({ onScanStart }) {
   const [selectedModules, setSelectedModules] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // At-a-glance metrics derived from existing scan history (presentational only).
+  const metrics = useMemo(() => {
+    const hist = history || [];
+    const complete = hist.filter(h => h.status === 'complete');
+    const targets = new Set(hist.map(h => h.target)).size;
+    let crit = 0, high = 0, total = 0;
+    complete.forEach(h => {
+      const sc = h.severity_counts || {};
+      crit += sc.critical || 0; high += sc.high || 0;
+      total += SEV_ORDER.reduce((a, s) => a + (sc[s] || 0), 0);
+    });
+    return { scans: hist.length, targets, total, crit, high };
+  }, [history]);
 
   const toggleModule = (name) =>
     setSelectedModules(p => p.includes(name) ? p.filter(n => n !== name) : [...p, name]);
@@ -488,27 +578,40 @@ function HomeView({ onScanStart }) {
   };
 
   return (
-    <div className="fade-in" style={{ maxWidth: 640, margin: '60px auto', padding: '0 20px' }}>
-      {/* Logo / headline */}
-      <div style={{ textAlign:'center', marginBottom: 40 }}>
-        <div style={{
-          width: 60, height: 60, borderRadius: 12,
-          background: 'linear-gradient(135deg, #1E88E5, #0D47A1)',
-          display:'flex', alignItems:'center', justifyContent:'center',
-          fontSize: 22, fontWeight: 900, color: '#fff', fontFamily: 'monospace',
-          margin: '0 auto 16px', letterSpacing: '-1px',
-          boxShadow: '0 0 40px #1E88E530',
-        }}>BSS</div>
-        <h1 style={{ fontSize: 26, fontWeight: 700, color:'#E2E8F0', margin: '0 0 6px' }}>
-          BSS Recon Dashboard
+    <div className="fade-in" style={{ maxWidth: 980, margin: '28px auto', padding: '0 24px' }}>
+      {/* Dashboard header */}
+      <div style={{ marginBottom: 22 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 800, color:'#E2E8F0', margin: '0 0 4px', letterSpacing:'-0.02em' }}>
+          Security Dashboard
         </h1>
         <p style={{ fontSize: 13, color:'#3B6B96', margin: 0 }}>
-          Burgohy Security Solutions — Passive & Active Recon Platform
+          Burgohy Security Solutions — passive &amp; active reconnaissance platform
         </p>
       </div>
 
+      {/* At-a-glance metrics */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 26 }}>
+        {[
+          { label:'Total Scans',       value: metrics.scans,   color:'#1E88E5' },
+          { label:'Targets Monitored', value: metrics.targets, color:'#42A5F5' },
+          { label:'Total Findings',    value: metrics.total,   color:'#B8960C' },
+          { label:'Critical',          value: metrics.crit,    color:'#EF4444' },
+          { label:'High',              value: metrics.high,    color:'#F97316' },
+        ].map(m => (
+          <div key={m.label} className="stat-card">
+            <div className="accent-bar" style={{ background: m.color }}/>
+            <div className="kpi" style={{ color: m.color }}>{m.value}</div>
+            <div className="kpi-label">{m.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* New scan */}
+      <div style={{ fontSize: 11, fontWeight: 700, color:'#3B6B96', letterSpacing:'0.1em',
+        textTransform:'uppercase', marginBottom: 10 }}>New Scan</div>
+
       {/* Scan card */}
-      <div className="card" style={{ padding: 24 }}>
+      <div className="card" style={{ padding: 24, maxWidth: 660 }}>
         <label style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
           textTransform:'uppercase', display:'block', marginBottom:8 }}>Target Domain</label>
         <input
@@ -616,6 +719,77 @@ function HomeView({ onScanStart }) {
 }
 
 // ─── Scanning view ─────────────────────────────────────────────────────────────
+// ─── Per-module circular scanning gauge ─────────────────────────────────────────
+function ModuleGauge({ status, count }) {
+  const R = 18, C = 2 * Math.PI * R;
+  const centerColor = { done:'#22C55E', error:'#EF4444', running:'#E4C04A', pending:'#2A4D73' }[status] || '#2A4D73';
+  return (
+    <div style={{ position:'relative', width:52, height:52, flexShrink:0 }}>
+      <svg viewBox="0 0 44 44" width="52" height="52">
+        {/* track */}
+        <circle cx="22" cy="22" r={R} fill="none" stroke="#12233d" strokeWidth="4"/>
+        {/* done: full green ring */}
+        {status === 'done' && (
+          <circle cx="22" cy="22" r={R} fill="none" stroke="#22C55E" strokeWidth="4" strokeLinecap="round"
+            strokeDasharray={C} strokeDashoffset="0" transform="rotate(-90 22 22)"
+            style={{ transition:'stroke-dashoffset .6s ease' }}/>
+        )}
+        {/* error: full red ring */}
+        {status === 'error' && (
+          <circle cx="22" cy="22" r={R} fill="none" stroke="#EF4444" strokeWidth="4"
+            strokeDasharray={C} strokeDashoffset="0"/>
+        )}
+        {/* running: indeterminate gold→blue sweep */}
+        {status === 'running' && (
+          <g className="gauge-spin">
+            <circle cx="22" cy="22" r={R} fill="none" stroke="url(#gaugeSweep)" strokeWidth="4"
+              strokeLinecap="round" strokeDasharray={`${C * 0.28} ${C}`} transform="rotate(-90 22 22)"/>
+          </g>
+        )}
+      </svg>
+      <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center',
+        fontSize: status === 'done' ? 14 : 12, fontWeight:800, color:centerColor, fontVariantNumeric:'tabular-nums' }}>
+        {status === 'done' ? (count || 0) : status === 'error' ? '✕' : status === 'pending' ? '○' : ''}
+      </div>
+    </div>
+  );
+}
+
+// ─── Attack surface score gauge (0–100, colour-zoned) ────────────────────────────
+function ScoreGauge({ score }) {
+  const v = Math.max(0, Math.min(100, Math.round(score || 0)));
+  const R = 74, C = 2 * Math.PI * R;
+  const off = C * (1 - v / 100);
+  const zone = v <= 30 ? '#22C55E' : v <= 60 ? '#EAB308' : v <= 80 ? '#F97316' : '#EF4444';
+  const label = v <= 30 ? 'Low' : v <= 60 ? 'Moderate' : v <= 80 ? 'High' : 'Critical';
+  return (
+    <div className="card" style={{ padding:18, display:'flex', flexDirection:'column', alignItems:'center' }}>
+      <div style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
+        textTransform:'uppercase', alignSelf:'flex-start', marginBottom:6 }}>Attack Surface Score</div>
+      <div style={{ position:'relative', width:190, height:190 }}>
+        <svg viewBox="0 0 190 190" width="190" height="190">
+          <circle cx="95" cy="95" r={R} fill="none" stroke="#12233d" strokeWidth="14"/>
+          <circle cx="95" cy="95" r={R} fill="none" stroke={zone} strokeWidth="14" strokeLinecap="round"
+            strokeDasharray={C} strokeDashoffset={off} transform="rotate(-90 95 95)"
+            style={{ transition:'stroke-dashoffset .9s ease, stroke .4s ease' }}/>
+        </svg>
+        <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column',
+          alignItems:'center', justifyContent:'center' }}>
+          <div style={{ fontSize:46, fontWeight:800, color:'#E2E8F0', lineHeight:1 }}>{v}</div>
+          <div style={{ fontSize:12, fontWeight:700, color:zone, marginTop:4 }}>{label} risk</div>
+        </div>
+      </div>
+      <div style={{ display:'flex', gap:12, marginTop:12, fontSize:9.5, color:'#5B7FA6' }}>
+        {[['0–30','#22C55E'],['31–60','#EAB308'],['61–80','#F97316'],['81–100','#EF4444']].map(([r,c]) => (
+          <span key={r} style={{ display:'flex', alignItems:'center', gap:4 }}>
+            <span style={{ width:8, height:8, borderRadius:2, background:c }}/>{r}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ScanningView({ scanId, target, active, onComplete }) {
   const [modules, setModules] = useState({});
   const [progress, setProgress] = useState({ completed:0, total:0 });
@@ -705,34 +879,48 @@ function ScanningView({ scanId, target, active, onComplete }) {
         )}
       </div>
 
+      {/* Shared gradient for the running gauge sweep (gold → blue) */}
+      <svg width="0" height="0" style={{ position:'absolute' }} aria-hidden="true">
+        <defs>
+          <linearGradient id="gaugeSweep" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#B8960C"/>
+            <stop offset="1" stopColor="#42A5F5"/>
+          </linearGradient>
+        </defs>
+      </svg>
+
       {/* Module grid */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))', gap:10 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(250px, 1fr))', gap:10 }}>
         {moduleList.map(([name, m]) => (
           <div key={name} className="card module-card" data-status={m.status} style={{
             padding:'13px 15px',
             borderLeft:`3px solid ${statusColor[m.status] || '#2A4D73'}`,
+            display:'flex', alignItems:'center', gap:13,
           }}>
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:4 }}>
-              <span style={{ fontFamily:'monospace', fontSize:12, fontWeight:700, color:'#C9D6E8' }}>{name}</span>
-              <span style={{ fontSize:10 }}>
-                {m.status === 'running' && <span style={{ color:'#42A5F5', fontWeight:700 }}><span className="live-dot"></span>running</span>}
-                {m.status === 'done'    && <span style={{ color:'#22C55E' }}>✓ done</span>}
-                {m.status === 'error'   && <span style={{ color:'#EF4444' }}>✗ error</span>}
-                {m.status === 'pending' && <span style={{ color:'#2A4D73' }}>○ pending</span>}
-              </span>
-            </div>
-            <div style={{ fontSize:10, color:'#3B6B96', marginBottom:4 }}>{m.description}</div>
-            {m.status === 'done' && m.finding_count > 0 && (
-              <div style={{ fontSize:10, color:'#F97316', fontWeight:700 }}>
-                {m.finding_count} finding{m.finding_count !== 1 ? 's' : ''}
+            <ModuleGauge status={m.status} count={m.finding_count}/>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:6, marginBottom:2 }}>
+                <span style={{ fontFamily:'monospace', fontSize:12, fontWeight:700, color:'#C9D6E8' }}>{name}</span>
+                <span style={{ fontSize:10 }}>
+                  {m.status === 'running' && <span style={{ color:'#E4C04A', fontWeight:700 }}><span className="live-dot" style={{ background:'#E4C04A' }}></span>running</span>}
+                  {m.status === 'done'    && <span style={{ color:'#22C55E' }}>✓ done</span>}
+                  {m.status === 'error'   && <span style={{ color:'#EF4444' }}>✗ error</span>}
+                  {m.status === 'pending' && <span style={{ color:'#2A4D73' }}>○ pending</span>}
+                </span>
               </div>
-            )}
-            {m.status === 'error' && (
-              <div style={{ fontSize:10, color:'#EF4444' }} title={m.error}>error — {m.error?.slice(0,40)}</div>
-            )}
-            {m.mode === 'active' && (
-              <div style={{ fontSize:9, color:'#F9731660', marginTop:2, fontWeight:700, letterSpacing:'0.05em' }}>ACTIVE</div>
-            )}
+              <div style={{ fontSize:10, color:'#3B6B96', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{m.description}</div>
+              {m.status === 'done' && m.finding_count > 0 && (
+                <div style={{ fontSize:10, color:'#F97316', fontWeight:700, marginTop:2 }}>
+                  {m.finding_count} finding{m.finding_count !== 1 ? 's' : ''}
+                </div>
+              )}
+              {m.status === 'error' && (
+                <div style={{ fontSize:10, color:'#EF4444', marginTop:2 }} title={m.error}>error — {m.error?.slice(0,40)}</div>
+              )}
+              {m.mode === 'active' && (
+                <div style={{ fontSize:9, color:'#F9731660', marginTop:2, fontWeight:700, letterSpacing:'0.05em' }}>ACTIVE</div>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -1085,7 +1273,7 @@ function FindingsTable({ findings }) {
 
       {/* Table */}
       <div style={{ overflowX:'auto' }}>
-        <table style={{ width:'100%', borderCollapse:'collapse' }}>
+        <table className="data-table" style={{ width:'100%', borderCollapse:'collapse' }}>
           <thead>
             <tr>
               {[['severity','Severity'],['title','Finding'],['module','Module'],['owasp','OWASP']].map(([k,l]) => (
@@ -1182,6 +1370,14 @@ function ResultsView({ scanId, history }) {
   const total = SEV_ORDER.reduce((a,s) => a+(sc[s]||0), 0);
   const duration = fmtDuration(data.started_at, data.finished_at);
 
+  // Attack surface score: use the backend score if present, else derive a
+  // weighted 0–100 risk score from the severity breakdown (presentational).
+  const score = (typeof data.score === 'number')
+    ? data.score
+    : Math.min(100, Math.round(
+        (sc.critical||0)*25 + (sc.high||0)*12 + (sc.medium||0)*5 + (sc.low||0)*2 + (sc.info||0)*0.5
+      ));
+
   return (
     <div className="fade-in" style={{ padding:'20px', maxWidth:1100, margin:'0 auto' }}>
       {/* Summary row */}
@@ -1224,6 +1420,13 @@ function ResultsView({ scanId, history }) {
             fontWeight:700,
           }}>↓ PDF Report</button>
         </a>
+      </div>
+
+      {/* Centerpiece visuals — attack surface score + severity donut */}
+      <div style={{ display:'grid', gridTemplateColumns:'minmax(240px, 1fr) minmax(260px, 1.35fr)',
+        gap:14, marginBottom:18 }}>
+        <ScoreGauge score={score}/>
+        <SeverityDonut counts={sc}/>
       </div>
 
       {/* Tabs */}
@@ -2199,24 +2402,26 @@ function App() {
   return (
     <ThemeCtx.Provider value={ctxValue}>
       <div style={{
-        display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden',
+        display:'flex', flexDirection:'row', height:'100vh', overflow:'hidden',
         background: theme==='dark' ? '#050C18' : '#F0F4F8',
       }}>
-        <Header
+        <Sidebar
           view={view}
-          onBack={() => { setView('home'); setScanId(null); setCompareMode(false); setSelectedForCompare([]); }}
           onNav={handleNav}
-          scanTarget={scanTarget}
+          history={history}
+          onSelect={handleHistorySelect}
+          activeScanId={activeScanId}
+          compareMode={compareMode}
+          selectedForCompare={selectedForCompare}
+          onToggleCompare={toggleCompareMode}
         />
 
-        <div style={{ display:'flex', flex:1, overflow:'hidden' }}>
-          <Sidebar
-            history={history}
-            onSelect={handleHistorySelect}
-            activeScanId={activeScanId}
-            compareMode={compareMode}
-            selectedForCompare={selectedForCompare}
-            onToggleCompare={toggleCompareMode}
+        <div style={{ display:'flex', flexDirection:'column', flex:1, overflow:'hidden' }}>
+          <Header
+            view={view}
+            onBack={() => { setView('home'); setScanId(null); setCompareMode(false); setSelectedForCompare([]); }}
+            onNav={handleNav}
+            scanTarget={scanTarget}
           />
 
           <main style={{ flex:1, overflowY:'auto', overflowX:'hidden' }}>
@@ -2238,7 +2443,7 @@ function App() {
               </div>
             )}
 
-            {view === 'home' && <HomeView onScanStart={handleScanStart}/>}
+            {view === 'home' && <HomeView onScanStart={handleScanStart} history={history}/>}
             {view === 'traffic' && <TrafficAnalyzerView/>}
             {view === 'phishing' && <PhishingAnalyzerView/>}
             {view === 'scanning' && scanId && (
