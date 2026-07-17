@@ -208,6 +208,7 @@ class ScanRequest(BaseModel):
     target: str
     active: bool = False
     modules: Optional[list[str]] = None
+    profile: str = "balanced"   # stealth | balanced | aggressive
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +228,8 @@ def _sev_counts(findings: list[dict]) -> dict[str, int]:
     return c
 
 
-def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | None) -> None:
+def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | None,
+              profile: str = "balanced") -> None:
     registry = _load_registry()
 
     to_run: dict[str, Any] = {
@@ -235,6 +237,13 @@ def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | No
         if (not requested or name in requested)
         and (active or getattr(mod, "mode", "passive") != "active")
     }
+
+    # Apply the selected concurrency profile to each module's config so active
+    # modules pace themselves accordingly (stealth/balanced/aggressive).
+    for _mod in to_run.values():
+        _cfg = getattr(_mod, "config", None)
+        if isinstance(_cfg, dict):
+            _cfg.setdefault("scan", {})["profile"] = profile
 
     with _lock:
         _scans[scan_id].update({
@@ -386,7 +395,7 @@ async def start_scan(req: ScanRequest) -> dict:
         _ws_queues[scan_id] = asyncio.Queue()
 
     asyncio.get_event_loop().run_in_executor(
-        _executor, _run_scan, scan_id, req.target, req.active, req.modules
+        _executor, _run_scan, scan_id, req.target, req.active, req.modules, req.profile
     )
 
     return {"scan_id": scan_id, "target": req.target, "status": "queued", "started_at": now}

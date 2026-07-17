@@ -71,8 +71,22 @@ def cli(ctx, config):
     metavar="HOURS",
     help="Re-run scan every N hours and alert on changes (0 = run once).",
 )
+@click.option(
+    "--accept-roe",
+    is_flag=True,
+    help="Acknowledge the Rules of Engagement: you have WRITTEN AUTHORIZATION to "
+         "actively scan this target. Required together with --active.",
+)
+@click.option(
+    "--profile",
+    type=click.Choice(["stealth", "balanced", "aggressive"]),
+    default="balanced",
+    show_default=True,
+    help="Scan intensity profile governing active-module concurrency and rate "
+         "(aggressive = authorized/owned targets only).",
+)
 @click.pass_context
-def scan(ctx, target, modules, output, report, active, monitor):
+def scan(ctx, target, modules, output, report, active, monitor, accept_roe, profile):
     """Run reconnaissance modules against a target domain.
 
     By default, only PASSIVE modules run (no direct contact with target).
@@ -87,8 +101,34 @@ def scan(ctx, target, modules, output, report, active, monitor):
     config = ctx.obj["config"]
     print_banner()
 
+    # Make the selected concurrency profile visible to every module.
+    config.setdefault("scan", {})["profile"] = profile
+
+    # ── Rules of Engagement gate ──────────────────────────────────────────
+    # Active scanning requires BOTH --active AND --accept-roe. Without the ROE
+    # acknowledgement we refuse to run active modules and fall back to passive.
+    active_enabled = bool(active and accept_roe)
+    if active and not accept_roe:
+        console.print(
+            "\n  [bold red][!] Active scanning requires Rules of Engagement acknowledgement.[/bold red]\n"
+            "  You passed [yellow]--active[/yellow] but not [yellow]--accept-roe[/yellow].\n"
+            "  Active modules send network probes to the target and require\n"
+            "  EXPLICIT WRITTEN AUTHORIZATION from the target owner.\n"
+            "  Re-run with [yellow]--accept-roe[/yellow] to confirm you have authorization.\n"
+            "  [dim]Active modules will be skipped; continuing with passive OSINT only.[/dim]"
+        )
+
+    # ── Active scanning notice banner (printed to stdout when active runs) ─
+    if active_enabled:
+        print("")
+        print("  [!] BSS RECON — ACTIVE SCANNING NOTICE")
+        print("  This tool sends active network probes to the target.")
+        print("  You MUST have explicit written authorization from the target owner.")
+        print("  Unauthorized scanning may violate computer crime laws (CFAA, Computer Misuse Act, etc.).")
+        print("")
+
     # Display scan mode
-    if active:
+    if active_enabled:
         console.print(
             "  Mode:   [bold yellow]ACTIVE[/bold yellow] "
             "[dim](making requests to target - authorization required)[/dim]"
@@ -99,6 +139,8 @@ def scan(ctx, target, modules, output, report, active, monitor):
             "[dim](OSINT only - no direct contact with target)[/dim]"
         )
 
+    console.print(f"  Profile:[bold white] {profile}[/bold white] "
+                  f"[dim](active-module concurrency/rate)[/dim]")
     console.print(f"  Target: [bold white]{target}[/bold white]")
     console.print(f"  Time:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     console.print("")
@@ -120,8 +162,9 @@ def scan(ctx, target, modules, output, report, active, monitor):
             module_cls = MODULE_REGISTRY[name]
             module_instance = module_cls(config)
 
-            # Check if this is an active module being run without --active flag
-            if module_instance.mode == "active" and not active:
+            # Active modules only run when active mode is enabled AND the ROE
+            # has been acknowledged (active_enabled).
+            if module_instance.mode == "active" and not active_enabled:
                 skipped_active.append(name)
                 continue
 
@@ -196,7 +239,7 @@ def scan(ctx, target, modules, output, report, active, monitor):
         _monitor_loop(
             target=target,
             interval_hours=monitor,
-            active=active,
+            active=active_enabled,
             modules=modules,
             recursive=report,
             first_report_path=json_path_for_monitor,

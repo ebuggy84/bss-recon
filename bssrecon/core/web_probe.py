@@ -371,9 +371,11 @@ class WebProbeModule(BaseModule):
 
         total_paths = len(PROBE_PATHS)
         checked = 0
+        ctrl = self.concurrency   # profile-governed pacing between probes
 
         for path, info in PROBE_PATHS.items():
             checked += 1
+            ctrl.throttle_sync()
             url = urljoin(base_url, path)
 
             try:

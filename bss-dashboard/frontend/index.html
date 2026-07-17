@@ -302,11 +302,11 @@ const ThemeCtx = createContext({ theme: 'dark', toggle: () => {} });
 
 // ─── API helpers ───────────────────────────────────────────────────────────────
 const api = {
-  startScan: (target, active, modules) =>
+  startScan: (target, active, modules, profile) =>
     fetch(`${API}/api/scan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target, active, modules: modules.length ? modules : null }),
+      body: JSON.stringify({ target, active, modules: modules.length ? modules : null, profile: profile || 'balanced' }),
     }).then(r => r.json()),
 
   getStatus: (id) => fetch(`${API}/api/scan/${id}/status`).then(r => r.json()),
@@ -531,6 +531,7 @@ function HomeView({ onScanStart, history }) {
   const dark = theme === 'dark';
   const [target, setTarget] = useState('');
   const [active, setActive] = useState(false);
+  const [profile, setProfile] = useState('balanced');
   const [showModules, setShowModules] = useState(false);
   const [selectedModules, setSelectedModules] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -557,7 +558,7 @@ function HomeView({ onScanStart, history }) {
     if (!target.trim()) { setError('Enter a target domain'); return; }
     setLoading(true); setError('');
     try {
-      const r = await api.startScan(target.trim(), active, selectedModules);
+      const r = await api.startScan(target.trim(), active, selectedModules, profile);
       if (r.scan_id) onScanStart(r.scan_id, target.trim(), active);
       else setError(r.detail || 'Failed to start scan');
     } catch(e) {
@@ -639,6 +640,23 @@ function HomeView({ onScanStart, history }) {
             <span style={{ fontSize:12, color: active ? '#42A5F5' : '#5B7FA6' }}>
               {active ? 'Active mode (needs authorization)' : 'Passive mode only (OSINT)'}
             </span>
+          </label>
+
+          {/* Scan intensity profile */}
+          <label style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:6, cursor:'pointer' }}>
+            <span style={{ fontSize:11, color:'#5B7FA6', fontWeight:600 }}>Profile</span>
+            <select value={profile} onChange={e => setProfile(e.target.value)}
+              title="Scan intensity profile — governs active-module concurrency and rate"
+              style={{
+                background: dark ? '#0F1F3D' : '#fff',
+                border: `1px solid ${profile === 'aggressive' ? '#F97316' : (dark ? '#1E3A5A' : '#CBD5E1')}`,
+                borderRadius: 6, color: dark ? '#C9D6E8' : '#1E293B',
+                fontSize: 11, padding: '5px 8px', cursor: 'pointer',
+              }}>
+              <option value="stealth">Stealth (quiet)</option>
+              <option value="balanced">Balanced (default)</option>
+              <option value="aggressive">Aggressive (authorized only)</option>
+            </select>
           </label>
         </div>
 

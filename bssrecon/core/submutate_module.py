@@ -242,12 +242,12 @@ class SubMutateModule(BaseModule):
                 tries=2,
             )
 
-            semaphore = asyncio.Semaphore(500)
+            ctrl = self.concurrency   # profile-governed limit + delay
             results = []
 
             async def resolve_one(sub):
                 nonlocal checked
-                async with semaphore:
+                async with ctrl.slot():
                     try:
                         resp = await resolver.query(sub, 'A')
                         if resp:
@@ -301,7 +301,7 @@ class SubMutateModule(BaseModule):
         alive = []
         checked = 0
         start = time.time()
-        max_workers = int(self.config.get("scan", {}).get("submutate_threads", 30))
+        max_workers = self.concurrency.limit   # profile-governed concurrency
 
         def resolve_one(sub):
             try:

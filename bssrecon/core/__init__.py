@@ -52,6 +52,21 @@ class BaseModule(ABC):
         self.timeout = self.config.get("scan", {}).get("timeout", 10)
         self.rate_limit = self.config.get("scan", {}).get("rate_limit", 1.0)
 
+    @property
+    def concurrency(self):
+        """
+        ConcurrencyController for the currently-selected scan profile
+        (config['scan']['profile']; defaults to BALANCED). Rebuilt only when the
+        profile changes, so it reflects per-scan profile changes (e.g. from the
+        dashboard) while staying stable within a single module run.
+        """
+        from bssrecon.core.concurrency import ConcurrencyController, get_profile
+        prof = get_profile(self.config.get("scan", {}).get("profile"))
+        if getattr(self, "_conc_profile", None) != prof:
+            self._concurrency = ConcurrencyController(prof)
+            self._conc_profile = prof
+        return self._concurrency
+
     def get_api_key(self):
         """
         Get the API key for this module from config.

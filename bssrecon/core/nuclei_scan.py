@@ -325,10 +325,13 @@ class NucleiScan(BaseModule):
             "-output", output_file,
             "-silent",
             "-no-interactsh",
-            "-rl", str(int(rate_limit * 150)),   # nuclei rl is req/min; config is req/sec
             "-timeout", str(scan_cfg.get("timeout", 10)),
             "-H", f"User-Agent: {user_agent}",
         ]
+
+        # Concurrency (-c) + rate-limit (-rl) come from the active scan profile
+        # (stealth/balanced/aggressive) so the operator controls scan intensity.
+        cmd += self.concurrency.nuclei_flags()
 
         # Inject HackerOne researcher header if configured
         h1 = None

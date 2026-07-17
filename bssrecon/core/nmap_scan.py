@@ -590,16 +590,14 @@ class NmapScan(BaseModule):
             "nmap",
             "-sV", "-sC",
             "--top-ports", "1000",
-            "-T4",
             "--open",
             "-oX", str(xml_path),
             target,
         ]
 
-        # Apply rate limit from config — nmap uses --min-rate / --max-rate (pkts/sec)
-        rate_limit = float(scan_cfg.get("rate_limit", 1.0))
-        max_rate = max(10, int(rate_limit * 500))   # sensible floor
-        cmd += ["--max-rate", str(max_rate)]
+        # Timing template + packet-rate bounds come from the active scan profile
+        # (stealth/balanced/aggressive) so the operator controls scan intensity.
+        cmd += self.concurrency.nmap_flags()
 
         try:
             subprocess.run(
