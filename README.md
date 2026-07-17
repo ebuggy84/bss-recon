@@ -1,4 +1,8 @@
-# BSS Recon
+<p align="center">
+  <img src="assets/banner.png" alt="BSS Recon — Open-Source Security Reconnaissance Platform" width="100%">
+</p>
+
+<h1 align="center">BSS Recon</h1>
 
 **Open-source security reconnaissance platform built for penetration testers, bug bounty hunters, and security teams.**
 
