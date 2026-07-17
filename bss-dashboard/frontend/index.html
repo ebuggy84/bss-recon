@@ -272,6 +272,77 @@ tailwind.config = {
   /* Generic card lift helper */
   .card.elevate { transition: transform .25s var(--ease), box-shadow .25s ease; }
   .card.elevate:hover { transform: translateY(-2px); box-shadow: var(--elev-3); }
+
+  /* ══ Full-width application top bar ════════════════════════════ */
+  .appbar {
+    height: 56px; flex-shrink: 0; display: flex; align-items: center; gap: 16px;
+    padding: 0 18px;
+    background: linear-gradient(180deg, #14141F 0%, #0B1424 100%);
+    border-bottom: 1px solid rgba(184,150,12,0.24);
+    box-shadow: 0 2px 16px rgba(0,0,0,0.38);
+    position: relative; z-index: 30;
+  }
+  .appbar-search {
+    flex: 1; max-width: 540px; display: flex; align-items: center; gap: 9px;
+    background: rgba(5,12,24,0.55); border: 1px solid #1B3050; border-radius: 9px;
+    padding: 8px 12px; transition: border-color .18s ease, box-shadow .18s ease;
+  }
+  .appbar-search:focus-within { border-color: #1E88E5; box-shadow: 0 0 0 3px rgba(30,136,229,0.15); }
+  .appbar-search input { flex: 1; background: none; border: none; outline: none;
+    color: #C9D6E8; font-size: 12.5px; font-family: inherit; }
+  .appbar-search input::placeholder { color: #3B6B96; }
+  .appbar-search kbd { font-size: 9.5px; color: #3B6B96; border: 1px solid #1B3050;
+    border-radius: 4px; padding: 1px 5px; font-family: monospace; background: rgba(255,255,255,0.02); }
+
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: 8px; border: 1px solid #1B3050;
+    background: rgba(255,255,255,0.02); color: #8FA6C4; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    transition: background .18s ease, color .18s ease, border-color .18s ease;
+  }
+  .icon-btn:hover { background: rgba(255,255,255,0.06); color: #E4C04A; border-color: rgba(184,150,12,0.4); }
+
+  .scan-status {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600;
+    color: #8FA6C4; padding: 6px 12px; border-radius: 999px; white-space: nowrap;
+    background: rgba(255,255,255,0.03); border: 1px solid #1B3050; letter-spacing: 0.02em;
+  }
+  .scan-status.scanning { color: #7FB0E6; border-color: rgba(66,165,245,0.4); background: rgba(66,165,245,0.08); }
+
+  /* ══ Breadcrumb trail ══════════════════════════════════════════ */
+  .crumbs { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; }
+  .crumbs .crumb { color: #5B7FA6; white-space: nowrap; }
+  .crumbs .crumb.link { cursor: pointer; transition: color .15s ease; }
+  .crumbs .crumb.link:hover { color: #E4C04A; }
+  .crumbs .crumb.current { color: #E2E8F0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+  .crumbs .sep { color: #294263; }
+
+  /* ══ Sidebar sections + placeholder items ══════════════════════ */
+  .nav-group-label {
+    font-size: 9.5px; font-weight: 700; color: #3B6B96; letter-spacing: 0.14em;
+    text-transform: uppercase; padding: 14px 18px 6px;
+  }
+  .nav-item.disabled { cursor: default; opacity: 0.55; }
+  .nav-item.disabled:hover { background: transparent; color: #8FA6C4; }
+  .nav-item .soon {
+    margin-left: auto; font-size: 8px; font-weight: 700; letter-spacing: 0.06em;
+    color: #3B6B96; background: rgba(255,255,255,0.05); border-radius: 4px; padding: 1px 5px;
+  }
+  .nav-item .count {
+    margin-left: auto; font-size: 9.5px; font-weight: 700; color: #5B7FA6;
+    background: rgba(255,255,255,0.05); border-radius: 999px; padding: 1px 8px; font-variant-numeric: tabular-nums;
+  }
+
+  /* ══ Findings table meta pills ═════════════════════════════════ */
+  .meta-pill {
+    display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: 0.03em;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    font-family: 'Inter', system-ui, sans-serif; border: 1px solid transparent;
+  }
+  .meta-module { background: #12233d; color: #7FB0E6; border-color: #1B3050; font-family: monospace; }
+  .meta-owasp  { background: rgba(167,139,250,0.12); color: #A78BFA; border-color: rgba(167,139,250,0.28);
+                 max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+  .meta-status { background: rgba(66,165,245,0.12); color: #42A5F5; border-color: rgba(66,165,245,0.28); }
 </style>
 </head>
 <body>
@@ -353,56 +424,102 @@ function fmtDuration(a, b) {
 }
 
 // ─── Header ────────────────────────────────────────────────────────────────────
-function Header({ view, onBack, onNav, scanTarget }) {
+function TopBar({ view, scanTarget, onHome }) {
   const { theme, toggle } = useContext(ThemeCtx);
   const dark = theme === 'dark';
-  const TITLES = {
-    home: 'Security Dashboard', traffic: 'Traffic Analyzer', phishing: 'Phishing Analyzer',
-    scanning: 'Active Scan', results: 'Scan Results', compare: 'Scan Comparison',
-  };
-  const showBack = !['home', 'traffic', 'phishing'].includes(view);
+  const scanning = view === 'scanning';
   return (
-    <header className="topbar">
-      {showBack && (
-        <button onClick={onBack} style={{
-          background: 'none', border: '1px solid #1B3050', borderRadius: 6, cursor: 'pointer',
-          color: '#8FA6C4', fontSize: 11, padding: '5px 11px',
-          display:'flex', alignItems:'center', gap:5,
-        }}>← Back</button>
-      )}
-      <div style={{ fontSize: 14, fontWeight: 700, color: '#E2E8F0', letterSpacing: '-0.01em' }}>
-        {TITLES[view] || 'Dashboard'}
+    <header className="appbar">
+      {/* Logo */}
+      <div onClick={onHome} style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer', flexShrink:0 }}>
+        <div style={{
+          width:34, height:34, borderRadius:8, background:'linear-gradient(135deg,#1E88E5,#0D47A1)',
+          display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, fontWeight:900,
+          color:'#fff', fontFamily:'monospace', letterSpacing:'-1px',
+          boxShadow:'0 0 0 1px rgba(184,150,12,0.55), 0 2px 10px rgba(0,0,0,0.4)',
+        }}>BSS</div>
+        <div style={{ lineHeight:1.15 }}>
+          <div style={{ fontSize:13.5, fontWeight:800, color:'#F1F5FB' }}>BSS Recon</div>
+          <div style={{ fontSize:9.5, color:'#B8960C', fontWeight:600, letterSpacing:'0.04em' }}>Security Platform</div>
+        </div>
       </div>
-      {showBack && scanTarget && (
-        <>
-          <span style={{ color:'#1B3050' }}>/</span>
-          <span style={{ fontSize: 12, color:'#42A5F5', fontFamily:'monospace' }}>{scanTarget}</span>
-        </>
-      )}
-      {view === 'compare' && (
-        <>
-          <span style={{ color:'#1B3050' }}>/</span>
-          <span style={{ fontSize: 12, color:'#A78BFA' }}>Comparison</span>
-        </>
-      )}
-      <div style={{ flex: 1 }} />
 
-      <span style={{ fontSize: 10, color: '#3B6B96', fontWeight: 600, letterSpacing: '0.05em',
-        display:'flex', alignItems:'center', gap: 7, marginRight: 4 }}>
-        <span className="live-dot" style={{ background:'#22C55E' }}></span> READ-ONLY RECON
+      {/* Universal search */}
+      <label className="appbar-search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3B6B96" strokeWidth="2.2" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
+        </svg>
+        <input type="text" placeholder="Search targets, findings, modules…" aria-label="Universal search"/>
+        <kbd>/</kbd>
+      </label>
+
+      <div style={{ flex:1 }}/>
+
+      {/* Scan status indicator */}
+      <span className={`scan-status ${scanning ? 'scanning' : ''}`}>
+        {scanning
+          ? <><span className="live-dot" style={{ background:'#42A5F5' }}></span> Scanning</>
+          : <><span style={{ width:7, height:7, borderRadius:'50%', background:'#22C55E', display:'inline-block' }}></span> Idle</>}
       </span>
 
       {/* Theme toggle */}
-      <button onClick={toggle} style={{
-        background: dark ? '#0F1F3D' : '#FFFFFF22',
-        border: `1px solid ${dark ? '#162843' : '#3B5A8A'}`,
-        borderRadius: 6, cursor: 'pointer',
-        color: '#C9D6E8', fontSize: 11, padding: '5px 10px',
-        display:'flex', alignItems:'center', gap: 5,
-      }}>
-        {dark ? '☀ Light' : '☾ Dark'}
+      <button className="icon-btn" onClick={toggle} title={dark ? 'Switch to light' : 'Switch to dark'} aria-label="Toggle theme">
+        {dark ? '☀' : '☾'}
+      </button>
+
+      {/* Settings */}
+      <button className="icon-btn" title="Settings" aria-label="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H8a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V8a1.65 1.65 0 0 0 1.51 1H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+
+      {/* User / account */}
+      <button className="icon-btn" title="Account" aria-label="Account" style={{ borderColor:'rgba(184,150,12,0.4)' }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/>
+        </svg>
       </button>
     </header>
+  );
+}
+
+// ─── Breadcrumb bar ─────────────────────────────────────────────────────────────
+function Breadcrumb({ view, scanTarget, onBack, onHome }) {
+  const SECTION = {
+    home: 'Dashboard', traffic: 'Traffic Analyzer', phishing: 'Phishing Analyzer',
+    scanning: 'Active Scan', results: 'Scan Results', compare: 'Scan Comparison',
+  };
+  const atHome = view === 'home';
+  const showBack = !['home', 'traffic', 'phishing'].includes(view);
+  const showTarget = scanTarget && !['home', 'traffic', 'phishing'].includes(view);
+  return (
+    <div className="topbar">
+      <nav className="crumbs" aria-label="Breadcrumb">
+        <span className={`crumb ${atHome ? 'current' : 'link'}`}
+          onClick={atHome ? undefined : onHome}>Dashboard</span>
+        {!atHome && (
+          <>
+            <span className="sep">›</span>
+            <span className={`crumb ${showTarget ? '' : 'current'}`}>{SECTION[view] || 'View'}</span>
+          </>
+        )}
+        {showTarget && (
+          <>
+            <span className="sep">›</span>
+            <span className="crumb current" style={{ fontFamily:'monospace', color:'#42A5F5' }}>{scanTarget}</span>
+          </>
+        )}
+      </nav>
+      <div style={{ flex:1 }}/>
+      {showBack && (
+        <button onClick={onBack} style={{
+          background:'none', border:'1px solid #1B3050', borderRadius:6, cursor:'pointer',
+          color:'#8FA6C4', fontSize:11, padding:'5px 11px', display:'flex', alignItems:'center', gap:5,
+        }}>← Back</button>
+      )}
+    </div>
   );
 }
 
@@ -411,36 +528,39 @@ function Sidebar({ view, onNav, history, onSelect, activeScanId, compareMode, se
   const { theme } = useContext(ThemeCtx);
   const dark = theme === 'dark';
 
-  const NAV = [
-    ['home', 'Dashboard', '▤'],
-    ['traffic', 'Traffic Analyzer', '⇄'],
-    ['phishing', 'Phishing Analyzer', '✉'],
+  const MENU = [
+    { key:'home',    label:'Dashboard',       icon:'▦', on:true },
+    { key:'targets', label:'Targets',         icon:'◎' },
+    { key:'vulns',   label:'Vulnerabilities', icon:'⚠' },
+    { key:'reports', label:'Reports',         icon:'▤' },
   ];
+  const TOOLS = [
+    { key:'traffic',  label:'Traffic Analyzer',  icon:'⇄', on:true },
+    { key:'phishing', label:'Phishing Analyzer', icon:'✉', on:true },
+  ];
+  const renderItem = (item) => item.on ? (
+    <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => onNav(item.key)}>
+      <span className="ico" aria-hidden="true">{item.icon}</span>{item.label}
+    </button>
+  ) : (
+    <div key={item.key} className="nav-item disabled" title="Coming soon">
+      <span className="ico" aria-hidden="true">{item.icon}</span>{item.label}
+      <span className="soon">SOON</span>
+    </div>
+  );
 
   return (
     <aside className="app-sidebar">
-      {/* Brand */}
-      <div className="sidebar-brand">
-        <div style={{
-          width: 34, height: 34, borderRadius: 8,
-          background: 'linear-gradient(135deg, #1E88E5, #0D47A1)',
-          display:'flex', alignItems:'center', justifyContent:'center',
-          fontSize: 14, fontWeight: 900, color: '#fff', fontFamily: 'monospace', letterSpacing: '-1px',
-          boxShadow: '0 0 0 1px rgba(184,150,12,0.55), 0 2px 10px rgba(0,0,0,0.4)',
-        }}>BSS</div>
-        <div>
-          <div style={{ fontSize: 13.5, fontWeight: 800, color: '#F1F5FB', lineHeight: 1.15 }}>BSS Recon</div>
-          <div style={{ fontSize: 9.5, color: '#B8960C', lineHeight: 1.15, fontWeight: 600, letterSpacing: '0.04em' }}>Security Platform</div>
-        </div>
-      </div>
+      {/* Menu */}
+      <div className="nav-group-label">Menu</div>
+      <nav className="sidebar-nav" style={{ borderBottom:'none', paddingBottom:2 }}>
+        {MENU.map(renderItem)}
+      </nav>
 
-      {/* Primary navigation */}
+      {/* Tools */}
+      <div className="nav-group-label">Tools</div>
       <nav className="sidebar-nav">
-        {NAV.map(([k, l, ico]) => (
-          <button key={k} className={`nav-item ${view === k ? 'active' : ''}`} onClick={() => onNav(k)}>
-            <span className="ico" aria-hidden="true">{ico}</span>{l}
-          </button>
-        ))}
+        {TOOLS.map(renderItem)}
       </nav>
 
       {/* Scan history */}
@@ -512,6 +632,14 @@ function Sidebar({ view, onNav, history, onSelect, activeScanId, compareMode, se
           );
         })}
       </div>
+
+      {/* Settings (pinned bottom) */}
+      <nav className="sidebar-nav" style={{ borderBottom:'none', borderTop:'1px solid rgba(255,255,255,0.05)' }}>
+        <div className="nav-item disabled" title="Coming soon">
+          <span className="ico" aria-hidden="true">⚙</span>Settings
+          <span className="soon">SOON</span>
+        </div>
+      </nav>
     </aside>
   );
 }
@@ -1320,15 +1448,22 @@ function FindingsTable({ findings }) {
                       borderLeft:`3px solid ${expanded ? sevColors[f.severity?.toLowerCase()]||'#2A4D73' : 'transparent'}`,
                     }}
                   >
-                    <td style={{ padding:'8px 10px' }}><SevBadge sev={f.severity} small/></td>
-                    <td style={{ padding:'8px 10px', fontSize:12, color:'#C9D6E8', maxWidth:360 }}>
-                      <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                    <td style={{ padding:'9px 12px', verticalAlign:'top' }}><SevBadge sev={f.severity} small/></td>
+                    <td style={{ padding:'9px 12px', fontSize:12.5, color:'#E2E8F0', maxWidth:420, verticalAlign:'top' }}>
+                      <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:600 }}>
                         {f.title}
                       </div>
+                      <span className="meta-pill meta-status" style={{ marginTop:5 }}>OPEN</span>
                     </td>
-                    <td style={{ padding:'8px 10px', fontSize:11, color:'#5B7FA6', fontFamily:'monospace', whiteSpace:'nowrap' }}>{f.module||'—'}</td>
-                    <td style={{ padding:'8px 10px', fontSize:10, color:'#3B6B96', maxWidth:220 }}>
-                      <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{f.owasp||'—'}</div>
+                    <td style={{ padding:'9px 12px', whiteSpace:'nowrap', verticalAlign:'top' }}>
+                      {f.module
+                        ? <span className="meta-pill meta-module">{f.module}</span>
+                        : <span style={{ color:'#2A4D73', fontSize:11 }}>—</span>}
+                    </td>
+                    <td style={{ padding:'9px 12px', maxWidth:230, verticalAlign:'top' }}>
+                      {f.owasp
+                        ? <span className="meta-pill meta-owasp" title={f.owasp}>{f.owasp}</span>
+                        : <span style={{ color:'#2A4D73', fontSize:11 }}>—</span>}
                     </td>
                   </tr>
                   {expanded && (
@@ -2420,29 +2555,36 @@ function App() {
   return (
     <ThemeCtx.Provider value={ctxValue}>
       <div style={{
-        display:'flex', flexDirection:'row', height:'100vh', overflow:'hidden',
+        display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden',
         background: theme==='dark' ? '#050C18' : '#F0F4F8',
       }}>
-        <Sidebar
+        <TopBar
           view={view}
-          onNav={handleNav}
-          history={history}
-          onSelect={handleHistorySelect}
-          activeScanId={activeScanId}
-          compareMode={compareMode}
-          selectedForCompare={selectedForCompare}
-          onToggleCompare={toggleCompareMode}
+          scanTarget={scanTarget}
+          onHome={() => { setView('home'); setScanId(null); setCompareMode(false); setSelectedForCompare([]); }}
         />
 
-        <div style={{ display:'flex', flexDirection:'column', flex:1, overflow:'hidden' }}>
-          <Header
+        <div style={{ display:'flex', flexDirection:'row', flex:1, overflow:'hidden' }}>
+          <Sidebar
             view={view}
-            onBack={() => { setView('home'); setScanId(null); setCompareMode(false); setSelectedForCompare([]); }}
             onNav={handleNav}
-            scanTarget={scanTarget}
+            history={history}
+            onSelect={handleHistorySelect}
+            activeScanId={activeScanId}
+            compareMode={compareMode}
+            selectedForCompare={selectedForCompare}
+            onToggleCompare={toggleCompareMode}
           />
 
-          <main style={{ flex:1, overflowY:'auto', overflowX:'hidden' }}>
+          <div style={{ display:'flex', flexDirection:'column', flex:1, overflow:'hidden' }}>
+            <Breadcrumb
+              view={view}
+              scanTarget={scanTarget}
+              onBack={() => { setView('home'); setScanId(null); setCompareMode(false); setSelectedForCompare([]); }}
+              onHome={() => { setView('home'); setScanId(null); setCompareMode(false); setSelectedForCompare([]); }}
+            />
+
+            <main style={{ flex:1, overflowY:'auto', overflowX:'hidden' }}>
             {/* Compare launch bar */}
             {compareMode && selectedForCompare.length === 2 && view !== 'compare' && (
               <div style={{
@@ -2480,6 +2622,7 @@ function App() {
               />
             )}
           </main>
+          </div>
         </div>
       </div>
     </ThemeCtx.Provider>
