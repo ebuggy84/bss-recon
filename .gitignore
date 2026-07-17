@@ -28,6 +28,7 @@ ENV/
 
 # ─── Editor / backup / archive cruft ────────────────────────────────────
 *.bak
+*.pre-*
 *.tar.gz
 .vscode/
 .idea/
