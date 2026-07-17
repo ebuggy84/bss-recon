@@ -1,141 +1,168 @@
-# bss-recon
+# BSS Recon
 
-**A 19-module OSINT and reconnaissance platform for security assessments.** `bss-recon` unifies
-passive intelligence gathering and active scanning behind a single CLI and web dashboard: point it
-at a target and it runs WHOIS/DNS/SSL enumeration, subdomain discovery, WAF and technology
-fingerprinting, JavaScript secret analysis, Shodan/VirusTotal/Hunter.io lookups, Nmap and Nuclei
-scanning, and more — then produces a scored, framework-mapped assessment report in Markdown and PDF.
+**Open-source security reconnaissance platform built for penetration testers, bug bounty hunters, and security teams.**
 
-Built by **Burgohy Security Solutions** for repeatable, evidence-backed target assessments.
+BSS Recon runs 19 scanning modules against a target domain — passive OSINT and active probing — then maps every finding to OWASP Top 10 and MITRE ATT&CK categories, scores the overall attack surface, and generates a professional PDF report. Includes a real-time web dashboard for live scan monitoring.
+
+Built and maintained by [Emilio Burgohy](https://github.com/ebuggy84).
+
+---
+
+## Features
+
+- **19 scanning modules** covering DNS, subdomains, SSL, WHOIS, web probing, JS analysis, WAF detection, and more
+- **OWASP Top 10 + MITRE ATT&CK mapping** on every finding
+- **Attack surface scoring** — composite 0-100 score with severity breakdown
+- **Web dashboard** with live scan progress, animated gauges, severity donut chart, and module status tracking
+- **PDF + Markdown reporting** — branded, client-ready assessment reports
+- **Traffic Analyzer** — paste Burp HTTP history, extract endpoints, surface IDOR candidates
+- **Phishing Analyzer** — paste email headers, get SPF/DKIM/DMARC verdicts and red flag detection
+- **Monitor mode** — scheduled re-scans with diff tracking to detect changes over time
+- **Modular architecture** — enable/disable individual modules, run passive-only or full active scans
 
 ---
 
 ## Modules
 
-Passive and active modules can be run individually or as a pipeline (`--modules`).
-
-| # | Module | Type | Description |
-|---|--------|------|-------------|
-| 1  | `whois`      | Passive | WHOIS registration, registrar, and age lookup |
-| 2  | `dns`        | Passive | DNS record enumeration (A/AAAA/MX/NS/TXT/CNAME) |
-| 3  | `subdomains` | Passive | Subdomain discovery from multiple sources |
-| 4  | `submutate`  | Passive | **SubMutate** — permutation/mutation-based subdomain expansion |
-| 5  | `ssl`        | Passive | SSL/TLS certificate inspection and chain analysis |
-| 6  | `wafdetect`  | Active  | Web Application Firewall detection and fingerprinting |
-| 7  | `headers`    | Active  | Security-header analysis (HSTS, CSP, CORS, framing) |
-| 8  | `techdetect` | Active  | Technology-stack fingerprinting |
-| 9  | `webprobe`   | Active  | **Web probe v2** — liveness, status, titles, redirect chains |
-| 10 | `jsanalyze`  | Active  | JavaScript bundle analysis — secrets, API keys, endpoints |
-| 11 | `dorks`      | Passive | Google dork generation for the target |
-| 12 | `wayback`    | Passive | **Wayback Machine CDX** historical URL harvesting |
-| 13 | `diff`       | Passive | Change detection across successive scans |
-| 14 | `shodan`     | Passive | Shodan host/service intelligence |
-| 15 | `virustotal` | Passive | VirusTotal domain/IP reputation |
-| 16 | `hunter`     | Passive | Hunter.io email/contact discovery |
-| 17 | `nmap`       | Active  | Nmap port and service scanning |
-| 18 | `nuclei`     | Active  | Nuclei template-based vulnerability scanning |
-| 19 | `score`      | Passive | Attack-surface scoring and target prioritisation |
-
-Additional tooling: an **IDOR candidate finder** (`bssrecon/tools/idor_finder.py`) and
-**OWASP / MITRE ATT&CK** mapping of findings (`bssrecon/frameworks/`).
+| Module | Type | Description |
+|--------|------|-------------|
+| DNS | Passive | DNS record enumeration (A, MX, TXT, NS, SOA) |
+| WHOIS | Passive | Domain registration and ownership lookup |
+| SSL | Passive | SSL/TLS certificate analysis and expiration check |
+| Subdomains | Passive | Subdomain discovery via Certificate Transparency |
+| SubMutate | Active | Async DNS mutation engine (500-1000 queries/sec) |
+| Wayback | Passive | Historical URL discovery via Internet Archive CDX API |
+| VirusTotal | Passive | Domain/IP reputation and threat intelligence (API key required) |
+| Shodan | Passive | Exposed service and port lookup (API key required) |
+| Hunter.io | Passive | Email address discovery (API key required) |
+| Google Dorks | Passive | OSINT query generation for manual investigation |
+| Nmap | Active | Port scanning and service detection |
+| Nuclei | Active | Vulnerability template scanning |
+| Web Probe | Active | Path/file discovery with smart 404 fingerprinting |
+| WAF Detect | Active | Web application firewall identification |
+| Tech Detect | Active | Technology stack fingerprinting |
+| Headers | Active | HTTP security header analysis |
+| JS Analyzer | Active | JavaScript secret and endpoint extraction |
+| Diff Tracker | Analysis | Change detection between scans |
+| Score | Analysis | Composite attack surface scoring (0-100) |
 
 ---
 
-## Reporting & dashboard
+## Quick Start
 
-- **Markdown + PDF reports** — per-target assessment reports with findings mapped to OWASP and
-  MITRE ATT&CK (`bssrecon/reporting/`).
-- **Web dashboard** — a **FastAPI** backend and **React** single-page frontend
-  (`bss-dashboard/`) for launching scans and browsing results interactively.
+### Prerequisites
 
----
+- Python 3.10+
+- Git
 
-## Installation
+### Installation
 
 ```bash
+git clone https://github.com/ebuggy84/bss-recon.git
+cd bss-recon
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-```
-
-Some active modules shell out to external tools that must be installed separately and available on
-`PATH`: **nmap** and **nuclei**.
-
----
-
-## Configuration
-
-API-key-driven modules (Shodan, VirusTotal, Hunter.io, and optional AI analysis) read their keys
-from `config.yaml`. Copy the template and add your own keys:
-
-```bash
 cp config.yaml.example config.yaml
-# edit config.yaml — add API keys for the modules you want to use
 ```
+
+### Add API Keys (Optional)
+
+Edit config.yaml and add your keys for enhanced scanning:
 
 ```yaml
-api_keys:
-  shodan: ""
-  virustotal: ""
-  hunter_io: ""
+shodan:
+  api_key: "your-shodan-key"
+virustotal:
+  api_key: "your-virustotal-key"
+hunter:
+  api_key: "your-hunter-key"
 ```
 
-> **Never commit `config.yaml`.** It holds live API keys and is excluded by `.gitignore`; only
-> `config.yaml.example` (blank placeholders) is tracked. Modules with a blank key are skipped
-> automatically. Rotate any key that is ever exposed.
+Modules that require API keys will skip gracefully if no key is configured. The tool works out of the box with passive modules that don't need keys.
 
----
-
-## Usage
+### Run Your First Scan
 
 ```bash
-# Run the default module pipeline against a target
-python -m bssrecon scan example.com
+# Passive scan with report
+python -m bssrecon scan example.com -r
 
-# Run specific modules only
-python -m bssrecon scan example.com --modules whois,dns,subdomains,ssl,shodan
+# Generate PDF report from scan results
+python -m bssrecon report example.com -f pdf
 
-# Launch the web dashboard (FastAPI backend)
-cd bss-dashboard/backend && uvicorn main:app --port 8000
+# Monitor mode - rescan every 6 hours and track changes
+python -m bssrecon scan example.com -r --monitor 6
 ```
 
-Raw results are written to `output/` and formatted reports to `reports/` — both git-ignored.
+### Launch the Web Dashboard
+
+```bash
+source venv/bin/activate
+cd bss-dashboard/backend && uvicorn main:app --host 0.0.0.0 --port 8000 &
+cd ../frontend && python3 -m http.server 3000 --bind 0.0.0.0 &
+```
+
+Open http://localhost:3000 in your browser.
 
 ---
 
-## Project structure
+## Dashboard
+
+The web dashboard provides real-time scan monitoring with:
+
+- Animated per-module status gauges (pending to running to done)
+- Attack surface score gauge (0-100 with color zones)
+- Severity breakdown donut chart (Critical/High/Medium/Low/Info)
+- Findings table with OWASP and MITRE ATT&CK mapping
+- JSON and PDF export
+- Traffic Analyzer for IDOR candidate detection
+- Phishing Analyzer for email header analysis
+
+---
+
+## Project Structure
 
 ```
 bss-recon/
 ├── bssrecon/
-│   ├── cli.py              # CLI entry point
-│   ├── config.py           # config.yaml loader
-│   ├── core/               # the 19 recon modules
-│   ├── tools/              # IDOR finder and extras
-│   ├── ingest/             # parsers (e.g. Nmap XML)
-│   ├── frameworks/         # OWASP + MITRE ATT&CK mapping
-│   ├── reporting/          # Markdown + PDF report generation
-│   ├── utils/              # display / helpers
-│   └── wordlists/          # discovery wordlists
+│   ├── core/           # 19 scanning modules
+│   ├── reporting/      # PDF and Markdown report generators
+│   ├── frameworks/     # OWASP/MITRE mapping definitions
+│   ├── tools/          # Utility tools
+│   ├── utils/          # Helper functions
+│   ├── wordlists/      # Custom wordlists for subdomain mutation
+│   ├── cli.py          # CLI entry point and orchestrator
+│   └── config.py       # Configuration loader
 ├── bss-dashboard/
-│   ├── backend/            # FastAPI backend
-│   └── frontend/           # React single-page dashboard
-├── config.yaml.example     # API-key template (safe to commit)
-├── requirements.txt
-└── README.md
+│   ├── backend/        # FastAPI server
+│   └── frontend/       # React dashboard (single HTML file)
+├── config.yaml.example # Template configuration
+├── requirements.txt    # Python dependencies
+└── LICENSE             # MIT License
 ```
 
 ---
 
-## Responsible use
+## Reporting
 
-`bss-recon` is for **authorised security assessments only**. Run it exclusively against systems you
-own or are explicitly permitted to test. Active modules (nmap, nuclei, webprobe, wafdetect) generate
-traffic that may be logged or disruptive — stay within your engagement's scope and rate limits. The
-operator is responsible for lawful, authorised use.
+BSS Recon generates professional assessment reports in PDF and Markdown formats:
+
+- **Cover page** with target, date, and analyst name
+- **Executive summary** with severity breakdown
+- **Findings table** with OWASP category and MITRE technique mapping
+- **Detailed findings** with remediation guidance
+- **Disclaimer and scope** documentation
 
 ---
 
+## Legal
+
+This tool is intended for authorized security testing only. Always obtain written permission before scanning any target you do not own. Unauthorized scanning may violate computer crime laws.
+
 ## License
 
-Released under the MIT License.
+[MIT License](LICENSE) — free to use, modify, and distribute.
+
+## Author
+
+**Emilio Burgohy** — [GitHub](https://github.com/ebuggy84) | [LinkedIn](https://linkedin.com/in/emilioburgohy)
