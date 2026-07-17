@@ -39,11 +39,11 @@ class HunterModule(BaseModule):
         api_key = self.get_api_key()
         if not api_key:
             print_warning(
-                "Hunter.io API key not configured. "
-                "Free tier: 25 searches/month. "
-                "Get yours at: https://hunter.io/api-keys"
+                "[SKIP] Hunter.io module skipped — no API key configured in config.yaml "
+                "(set 'hunter_io' in config.yaml or the BSS_HUNTER_KEY env var; "
+                "free tier: https://hunter.io/api-keys)"
             )
-            return {"error": "No API key", "domain": target}
+            return {"domain": target, "skipped": True, "reason": "no_api_key", "findings": []}
 
         print_progress(f"Searching for email addresses at {target}")
 

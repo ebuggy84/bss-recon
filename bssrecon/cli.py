@@ -129,8 +129,8 @@ def scan(ctx, target, modules, output, report, active, monitor):
                 valid_modules.append((name, module_instance))
             else:
                 print_warning(
-                    f"Module '{name}' requires an API key. "
-                    f"Configure '{module_instance.api_key_name}' in config.yaml"
+                    f"[SKIP] {name} module skipped — no API key configured in config.yaml "
+                    f"(set '{module_instance.api_key_name}' in config.yaml)"
                 )
         else:
             print_warning(f"Unknown module: '{name}'. Skipping.")

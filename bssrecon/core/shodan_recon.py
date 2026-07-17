@@ -33,11 +33,11 @@ class ShodanModule(BaseModule):
         api_key = self.get_api_key()
         if not api_key:
             print_warning(
-                "Shodan API key not configured. "
-                "Add your key to config.yaml or set BSS_SHODAN_KEY env var. "
-                "Free tier: https://account.shodan.io"
+                "[SKIP] Shodan module skipped — no API key configured in config.yaml "
+                "(set 'shodan' in config.yaml or the BSS_SHODAN_KEY env var; "
+                "free tier: https://account.shodan.io)"
             )
-            return {"error": "No API key", "domain": target}
+            return {"domain": target, "skipped": True, "reason": "no_api_key", "findings": []}
 
         try:
             import shodan

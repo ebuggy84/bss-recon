@@ -40,11 +40,11 @@ class VirusTotalModule(BaseModule):
         api_key = self.get_api_key()
         if not api_key:
             print_warning(
-                "VirusTotal API key not configured. "
-                "Free tier: 500 requests/day. "
-                "Get yours at: https://www.virustotal.com/gui/join-us"
+                "[SKIP] VirusTotal module skipped — no API key configured in config.yaml "
+                "(set 'virustotal' in config.yaml or the BSS_VT_KEY env var; "
+                "free tier: https://www.virustotal.com/gui/join-us)"
             )
-            return {"error": "No API key", "domain": target}
+            return {"domain": target, "skipped": True, "reason": "no_api_key", "findings": []}
 
         headers = {"x-apikey": api_key}
         findings = []

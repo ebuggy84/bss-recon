@@ -12,6 +12,29 @@ MODES:
 from abc import ABC, abstractmethod
 
 
+# Values that indicate an unconfigured / placeholder API key (from config.yaml
+# templates). Treated the same as a missing key so modules skip gracefully.
+_PLACEHOLDER_KEYS = {
+    "", "none", "null", "changeme", "change-me", "todo", "example",
+    "xxx", "xxxx", "xxxxxxxx", "your-api-key", "your_api_key", "your-key-here",
+}
+
+
+def is_placeholder_key(value) -> bool:
+    """True if an API-key value is empty, missing, or obvious placeholder text."""
+    if value is None:
+        return True
+    v = str(value).strip().lower()
+    if not v or v in _PLACEHOLDER_KEYS:
+        return True
+    # Common template patterns: your-shodan-key, your_vt_key, <your key>, replace-me...
+    if v.startswith(("your-", "your_", "<", "replace", "insert", "add-your")):
+        return True
+    if "your" in v and "key" in v:
+        return True
+    return False
+
+
 class BaseModule(ABC):
     """Base class for all recon modules."""
 
@@ -30,10 +53,17 @@ class BaseModule(ABC):
         self.rate_limit = self.config.get("scan", {}).get("rate_limit", 1.0)
 
     def get_api_key(self):
-        """Get the API key for this module from config."""
+        """
+        Get the API key for this module from config.
+        Returns None if the key is missing, empty, or placeholder text so
+        callers (is_available / module guards) treat it as unconfigured.
+        """
         if not self.api_key_name:
             return None
-        return self.config.get("api_keys", {}).get(self.api_key_name, "")
+        key = self.config.get("api_keys", {}).get(self.api_key_name, "")
+        if is_placeholder_key(key):
+            return None
+        return key
 
     def is_available(self):
         """Check if this module can run (has required API keys, etc)."""
