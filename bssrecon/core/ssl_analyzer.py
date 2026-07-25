@@ -25,6 +25,42 @@ class SslModule(BaseModule):
     description = "SSL/TLS certificate analysis"
     requires_api_key = False
 
+    def _connect(self, host, port):
+        """Open a TCP connection to host:port, trying IPv4 before IPv6.
+
+        socket.create_connection() resolves with AF_UNSPEC and may try an IPv6
+        (AAAA) address first. On a host with no IPv6 route that connect fails
+        immediately with OSError [Errno 101] Network is unreachable, and the
+        error surfaced to the caller is that IPv6 failure even when IPv4 would
+        have worked. We resolve explicitly and try IPv4 addresses first, only
+        falling back to IPv6, so a missing IPv6 route no longer breaks the scan.
+        Raises the last OSError if every address fails.
+        """
+        infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        # IPv4 (AF_INET) first, then IPv6 (AF_INET6).
+        infos.sort(key=lambda i: 0 if i[0] == socket.AF_INET else 1)
+
+        # If every address fails, surface the FIRST (preferred-family, i.e.
+        # IPv4) error rather than the last. On an IPv4-only host the IPv6 attempt
+        # fails with ENETUNREACH, which would mask the far more useful IPv4 result
+        # (e.g. ECONNREFUSED = the target simply doesn't serve HTTPS on 443).
+        first_error = None
+        for family, socktype, proto, _canon, sockaddr in infos:
+            sock = None
+            try:
+                sock = socket.socket(family, socktype, proto)
+                sock.settimeout(self.timeout)
+                sock.connect(sockaddr)
+                return sock
+            except OSError as exc:
+                if first_error is None:
+                    first_error = exc
+                if sock is not None:
+                    sock.close()
+        if first_error is not None:
+            raise first_error
+        raise OSError(f"Could not resolve any address for {host}:{port}")
+
     def run(self, target: str) -> dict:
         print_section("SSL/TLS Analysis", "🔒")
         print_progress(f"Connecting to {target}:443")
@@ -33,10 +69,8 @@ class SslModule(BaseModule):
             # Create SSL context
             context = ssl.create_default_context()
 
-            # Connect and get certificate
-            with socket.create_connection(
-                (target, 443), timeout=self.timeout
-            ) as sock:
+            # Connect (IPv4-first) and get certificate
+            with self._connect(target, 443) as sock:
                 with context.wrap_socket(sock, server_hostname=target) as ssock:
                     cert = ssock.getpeercert()
                     cipher = ssock.cipher()
@@ -177,6 +211,27 @@ class SslModule(BaseModule):
         except ConnectionRefusedError:
             print_error(f"Connection refused on {target}:443 (no HTTPS?)")
             return {"error": "Connection refused", "domain": target}
+        except socket.gaierror as e:
+            msg = f"DNS resolution failed for {target}: {e}"
+            print_error(msg)
+            return {"error": msg, "domain": target}
+        except OSError as e:
+            # Network-level failure (e.g. Errno 101 Network is unreachable /
+            # Errno 113 No route to host). We already try IPv4 before IPv6, so
+            # reaching here means no address was reachable at all. Fail with a
+            # clear, actionable message instead of a raw traceback.
+            import errno
+            if e.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH):
+                msg = (
+                    f"Cannot reach {target}:443 — network unreachable "
+                    f"(Errno {e.errno}). No route to the host on any resolved "
+                    f"IPv4/IPv6 address. Check connectivity/VPN and that the "
+                    f"target serves HTTPS."
+                )
+            else:
+                msg = f"SSL connection to {target}:443 failed: {e}"
+            print_error(msg)
+            return {"error": msg, "domain": target}
         except Exception as e:
             print_error(f"SSL analysis failed: {str(e)}")
             return {"error": str(e), "domain": target}
