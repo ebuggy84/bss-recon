@@ -193,4 +193,4 @@ This tool is intended for authorized security testing only. Always obtain writte
 
 ## Author
 
-**Emilio Burgohy** — [GitHub](https://github.com/ebuggy84) | [LinkedIn](https://linkedin.com/in/emilioburgohy)
+**Emilio Burgohy** — [GitHub](https://github.com/ebuggy84) | [LinkedIn](https://linkedin.com/in/emilioburgohy1984)
