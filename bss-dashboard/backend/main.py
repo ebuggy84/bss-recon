@@ -47,8 +47,17 @@ _scans: dict[str, dict] = {}
 _ws_queues: dict[str, asyncio.Queue] = {}
 _main_loop: asyncio.AbstractEventLoop | None = None
 
-OUTPUT_DIR = Path("dashboard_output")
-OUTPUT_DIR.mkdir(exist_ok=True)
+# Unified scan-output directory — SHARED with the CLI. Resolved from the same
+# bssrecon config (output.output_dir) the CLI uses, anchored to the repo root so
+# the dashboard and `python -m bssrecon scan` read and write the SAME folder
+# regardless of working directory. Falls back to a local "dashboard_output" only
+# if bssrecon can't be imported (pure demo mode).
+try:
+    from bssrecon.config import load_config as _load_cfg, get_output_dir as _get_out
+    OUTPUT_DIR = _get_out(_load_cfg())
+except Exception:  # bssrecon not importable — demo/dev fallback
+    OUTPUT_DIR = Path("dashboard_output")
+    OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 @app.on_event("startup")
@@ -350,9 +359,127 @@ def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | No
 def _persist(scan_id: str) -> None:
     with _lock:
         data = dict(_scans[scan_id])
+    # Never rewrite a file that originated from the CLI — it lives in the shared
+    # output dir in the CLI's own format, and overwriting it with the dashboard
+    # record shape would corrupt it for the `bssrecon report` command.
+    if data.get("source") == "cli":
+        return
     (OUTPUT_DIR / f"{scan_id}.json").write_text(
         json.dumps(data, indent=2, default=str), encoding="utf-8"
     )
+
+
+# ---------------------------------------------------------------------------
+# CLI ↔ dashboard format bridge
+#
+# The CLI writes scans as {module_name: {..., "findings": [...]}} while the
+# dashboard uses {scan_id, target, findings[], severity_counts{}, modules{}}.
+# Since both now share one output dir, the dashboard normalizes CLI-format
+# files on read so a `python -m bssrecon scan` shows up here WITH findings.
+# ---------------------------------------------------------------------------
+
+def _module_meta() -> dict[str, tuple[str, str]]:
+    """name -> (description, mode) from the real registry (best effort)."""
+    meta: dict[str, tuple[str, str]] = {}
+    try:
+        from bssrecon.core import MODULE_REGISTRY  # type: ignore
+        for name, cls in MODULE_REGISTRY.items():
+            meta[name] = (getattr(cls, "description", ""), getattr(cls, "mode", "passive"))
+    except Exception:
+        pass
+    return meta
+
+
+def _looks_like_cli_format(raw: Any) -> bool:
+    """True if `raw` is a CLI scan file (mapping of module -> result dict)."""
+    if not isinstance(raw, dict) or "scan_id" in raw or "severity_counts" in raw:
+        return False
+    for v in raw.values():
+        if isinstance(v, dict) and ("findings" in v or "domain" in v or "error" in v):
+            return True
+    return False
+
+
+def _normalize_cli_record(raw: dict, path: Path) -> dict:
+    """Convert a CLI-format scan dict into the dashboard record shape."""
+    import re
+
+    meta = _module_meta()
+    stem = path.stem
+
+    # Target: prefer a module's own domain/target field, else parse the filename.
+    target = ""
+    for v in raw.values():
+        if isinstance(v, dict) and (v.get("domain") or v.get("target")):
+            target = v.get("domain") or v.get("target")
+            break
+    if not target:
+        m = re.match(r"^(.*)_\d{8}_\d{6}$", stem)
+        target = (m.group(1) if m else stem).replace("_", ".")
+
+    # Timestamp: prefer the _YYYYmmdd_HHMMSS filename suffix, else file mtime.
+    started_at = None
+    m = re.search(r"_(\d{8})_(\d{6})$", stem)
+    if m:
+        try:
+            started_at = datetime.strptime(
+                m.group(1) + m.group(2), "%Y%m%d%H%M%S"
+            ).replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            started_at = None
+    if not started_at:
+        started_at = datetime.fromtimestamp(
+            path.stat().st_mtime, timezone.utc
+        ).isoformat()
+
+    modules: dict[str, Any] = {}
+    all_findings: list[dict] = []
+    for name, data in raw.items():
+        if not isinstance(data, dict):
+            continue
+        findings = data.get("findings", []) or []
+        for f in findings:
+            if isinstance(f, dict):
+                f.setdefault("module", name)
+                all_findings.append(f)
+        desc, mode = meta.get(name, ("", "passive"))
+        errored = "error" in data
+        entry = {
+            "status": "error" if errored else "done",
+            "description": desc,
+            "mode": mode,
+            "finding_count": len(findings),
+            "data": {k: v for k, v in data.items() if k != "findings"},
+        }
+        if errored:
+            entry["error"] = data.get("error")
+        modules[name] = entry
+
+    sev = _sev_counts(all_findings)
+
+    return {
+        "scan_id": stem,
+        "target": target,
+        "status": "complete",
+        "active": any(m.get("mode") == "active" for m in modules.values()),
+        "requested_modules": list(modules.keys()),
+        "started_at": started_at,
+        "finished_at": started_at,
+        "total_modules": len(modules),
+        "completed_modules": len(modules),
+        "modules": modules,
+        "findings": all_findings,
+        "severity_counts": sev,
+        "source": "cli",
+    }
+
+
+def _read_record(path: Path) -> dict:
+    """Read a scan file, normalizing CLI-format files to the dashboard shape."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if _looks_like_cli_format(raw):
+        return _normalize_cli_record(raw, path)
+    return raw
 
 
 def _fetch(scan_id: str) -> dict:
@@ -361,7 +488,7 @@ def _fetch(scan_id: str) -> dict:
             return dict(_scans[scan_id])
     path = OUTPUT_DIR / f"{scan_id}.json"
     if path.exists():
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = _read_record(path)
         with _lock:
             _scans[scan_id] = data
         return data
@@ -442,7 +569,7 @@ async def list_scans() -> list:
 
     for path in sorted(OUTPUT_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
-            d = json.loads(path.read_text(encoding="utf-8"))
+            d = _read_record(path)
             sid = d.get("scan_id", path.stem)
             seen.add(sid)
             rows.append({
@@ -474,6 +601,25 @@ async def list_scans() -> list:
             })
 
     return rows
+
+
+@app.delete("/api/scans")
+async def clear_scans() -> dict:
+    """Clear ALL scan history: delete every scan file in the unified output dir
+    (JSON + generated PDFs) and drop the in-memory cache. Used by the dashboard's
+    "Clear History" button. This also removes CLI-produced scans, since the CLI
+    and dashboard now share one history."""
+    deleted = 0
+    for pattern in ("*.json", "*.pdf"):
+        for path in OUTPUT_DIR.glob(pattern):
+            try:
+                path.unlink()
+                deleted += 1
+            except OSError:
+                pass
+    with _lock:
+        _scans.clear()
+    return {"status": "cleared", "deleted_files": deleted}
 
 
 @app.get("/api/export/{scan_id}/json")
