@@ -82,3 +82,28 @@ def get_api_key(config, service):
     """Get an API key, returning None if empty or missing."""
     key = config.get("api_keys", {}).get(service, "")
     return key if key else None
+
+
+# Repo root = the directory containing the bssrecon package (one level up from
+# this file). Used to anchor relative output paths so the CLI and the dashboard
+# resolve to the SAME directory regardless of the process working directory.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def get_output_dir(config, create=True):
+    """Return the unified scan-output directory as an absolute Path.
+
+    Both the CLI and the web dashboard call this so a scan written by one is
+    visible to the other. The location comes from config['output']['output_dir']
+    (default './output'). Relative paths are resolved against the repo root
+    (REPO_ROOT), NOT the current working directory — otherwise the dashboard
+    (started with a different CWD) would land in a different folder than the CLI
+    and the two histories would drift apart again.
+    """
+    raw = (config or {}).get("output", {}).get("output_dir", "./output")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = (REPO_ROOT / path).resolve()
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path

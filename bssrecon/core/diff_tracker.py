@@ -39,7 +39,8 @@ class DiffModule(BaseModule):
     def run(self, target: str) -> dict:
         print_section("Change Detection", "🔄")
 
-        output_dir = self.config.get("output", {}).get("output_dir", "./output")
+        from bssrecon.config import get_output_dir
+        output_dir = str(get_output_dir(self.config))
         prefix = target.replace(".", "_")
         findings = []
 

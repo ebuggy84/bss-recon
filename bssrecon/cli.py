@@ -18,7 +18,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from bssrecon.config import load_config, get_api_key
+from bssrecon.config import load_config, get_api_key, get_output_dir
 from bssrecon.utils.display import (
     print_banner,
     print_section,
@@ -210,8 +210,8 @@ def scan(ctx, target, modules, output, report, active, monitor, accept_roe, prof
     elapsed = time.time() - start_time
     print_scan_summary(target, results, elapsed)
 
-    # Save raw JSON output
-    output_dir = config.get("output", {}).get("output_dir", "./output")
+    # Save raw JSON output to the unified output dir (shared with the dashboard)
+    output_dir = str(get_output_dir(config))
     if config.get("output", {}).get("save_json", True) or output:
         os.makedirs(output_dir, exist_ok=True)
         json_path = output or os.path.join(
@@ -232,19 +232,161 @@ def scan(ctx, target, modules, output, report, active, monitor, accept_roe, prof
 
     # Monitor mode — re-run scan on a loop and diff results
     if monitor > 0:
-        json_path_for_monitor = output or os.path.join(
-            output_dir,
-            f"{target.replace('.', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-        )
         _monitor_loop(
             target=target,
             interval_hours=monitor,
             active=active_enabled,
             modules=modules,
-            recursive=report,
-            first_report_path=json_path_for_monitor,
+            report=report,
+            baseline=results,
+            output_dir=output_dir,
             config=config,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Monitor mode helpers
+#
+# `--monitor N` re-runs the selected modules every N hours and alerts when the
+# set of findings changes vs. the previous run. _monitor_loop() drives the loop;
+# the four helpers below do one unit of work each (run / save / diff / alert).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _monitor_run_once(target, modules, active, config):
+    """Run the same module selection a `scan` would, headless, return results."""
+    from bssrecon.core import MODULE_REGISTRY
+
+    if modules:
+        module_names = [m.strip() for m in modules.split(",")]
+    else:
+        module_names = config.get("default_modules", list(MODULE_REGISTRY.keys()))
+
+    valid = []
+    for name in module_names:
+        if name not in MODULE_REGISTRY:
+            continue
+        instance = MODULE_REGISTRY[name](config)
+        # Respect the same active/ROE gating the scan command applied.
+        if getattr(instance, "mode", "passive") == "active" and not active:
+            continue
+        if instance.is_available():
+            valid.append((name, instance))
+
+    results = {}
+    for name, instance in valid:
+        try:
+            results[name] = instance.run(target)
+        except Exception as exc:  # keep the loop alive on a single module crash
+            results[name] = {"error": str(exc)}
+    return results
+
+
+def _monitor_save(results, target, output_dir):
+    """Persist a monitor snapshot to the unified output dir; return its path."""
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(
+        output_dir,
+        f"{target.replace('.', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+    )
+    with open(path, "w") as f:
+        json.dump(results, f, indent=2, default=str)
+    return path
+
+
+def _monitor_diff(old_results, new_results):
+    """Diff two results dicts, returning newly-added and resolved findings.
+
+    Findings are keyed by (module, severity, title) so re-running the same scan
+    with identical results reports no change.
+    """
+    def _flatten(results):
+        flat = {}
+        for module, data in (results or {}).items():
+            if not isinstance(data, dict):
+                continue
+            for finding in data.get("findings", []):
+                if not isinstance(finding, dict):
+                    continue
+                key = (
+                    finding.get("module", module),
+                    str(finding.get("severity", "info")).lower(),
+                    str(finding.get("title", "")).strip().lower(),
+                )
+                flat[key] = {**finding, "module": finding.get("module", module)}
+        return flat
+
+    old_f = _flatten(old_results)
+    new_f = _flatten(new_results)
+    return {
+        "added": [f for k, f in new_f.items() if k not in old_f],
+        "removed": [f for k, f in old_f.items() if k not in new_f],
+    }
+
+
+def _monitor_alert(target, diff, iteration):
+    """Print a human-readable change alert for one monitor iteration."""
+    added, removed = diff["added"], diff["removed"]
+    if not added and not removed:
+        print_success(f"[monitor #{iteration}] No changes for {target}.")
+        return
+
+    console.print(
+        f"\n  [bold yellow]⚠ CHANGE DETECTED[/bold yellow] for "
+        f"[white]{target}[/white] (check #{iteration})"
+    )
+    for f in added:
+        console.print(
+            f"    [green]+ NEW[/green]  "
+            f"[dim]{f.get('severity','info')}[/dim] "
+            f"{f.get('module','?')}: {f.get('title','(no title)')}"
+        )
+    for f in removed:
+        console.print(
+            f"    [red]- GONE[/red] "
+            f"[dim]{f.get('severity','info')}[/dim] "
+            f"{f.get('module','?')}: {f.get('title','(no title)')}"
+        )
+
+
+def _monitor_loop(target, interval_hours, active, modules, report, baseline,
+                  output_dir, config):
+    """Re-scan `target` every `interval_hours` and alert on any change.
+
+    Runs until interrupted (Ctrl-C). `baseline` is the in-memory results dict
+    from the scan that just ran, so the first comparison is against real data.
+    """
+    interval_secs = max(1, int(interval_hours * 3600))
+    console.print(
+        f"\n  [bold cyan]Monitor mode:[/bold cyan] re-scanning "
+        f"[white]{target}[/white] every [white]{interval_hours}h[/white]. "
+        f"Press Ctrl-C to stop.\n"
+    )
+
+    previous = baseline
+    iteration = 0
+    try:
+        while True:
+            time.sleep(interval_secs)
+            iteration += 1
+            console.print(
+                f"  [dim]Monitor check #{iteration} — "
+                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/dim]"
+            )
+            current = _monitor_run_once(target, modules, active, config)
+            snapshot = _monitor_save(current, target, output_dir)
+            print_success(f"Snapshot saved: {snapshot}")
+
+            diff = _monitor_diff(previous, current)
+            _monitor_alert(target, diff, iteration)
+
+            if report and (diff["added"] or diff["removed"]):
+                from bssrecon.reporting.markdown_report import generate_markdown_report
+                report_path = generate_markdown_report(target, current, config)
+                print_success(f"Report generated: {report_path}")
+
+            previous = current
+    except KeyboardInterrupt:
+        console.print("\n  [yellow]Monitor stopped.[/yellow]")
 
 
 @cli.command()
@@ -279,7 +421,7 @@ def report(ctx, target, fmt, input_file):
             results = json.load(f)
     else:
         # Try to find the most recent scan for this target
-        output_dir = config.get("output", {}).get("output_dir", "./output")
+        output_dir = str(get_output_dir(config))
         prefix = target.replace(".", "_")
         json_files = sorted(
             Path(output_dir).glob(f"{prefix}_*.json"),
