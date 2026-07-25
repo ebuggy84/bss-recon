@@ -343,6 +343,26 @@ tailwind.config = {
   .meta-owasp  { background: rgba(167,139,250,0.12); color: #A78BFA; border-color: rgba(167,139,250,0.28);
                  max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
   .meta-status { background: rgba(66,165,245,0.12); color: #42A5F5; border-color: rgba(66,165,245,0.28); }
+
+  /* ══ Visual pass — CSS-only polish (no JS/markup logic touched) ═══
+     A single severity color system rendered as a left accent on every
+     findings row, so severity reads instantly across the whole table —
+     the reNgine/OpenVAS console look. Painted with an inset box-shadow on
+     the first cell so it never conflicts with the row's inline background. */
+  .data-table tbody tr.finding-row td:first-child { box-shadow: inset 3px 0 0 0 transparent; }
+  .data-table tbody tr.finding-row[data-sev="critical"] td:first-child { box-shadow: inset 3px 0 0 0 #EF4444; }
+  .data-table tbody tr.finding-row[data-sev="high"]     td:first-child { box-shadow: inset 3px 0 0 0 #F97316; }
+  .data-table tbody tr.finding-row[data-sev="medium"]   td:first-child { box-shadow: inset 3px 0 0 0 #EAB308; }
+  .data-table tbody tr.finding-row[data-sev="low"]      td:first-child { box-shadow: inset 3px 0 0 0 #22C55E; }
+  .data-table tbody tr.finding-row[data-sev="info"]     td:first-child { box-shadow: inset 3px 0 0 0 #64748B; }
+
+  /* Sortable column headers: hover affordance (cursor is already pointer). */
+  .data-table thead th:hover { color: #7FB0E6 !important; }
+
+  /* Scan-history rows: hover feedback without overriding active/selected
+     background (inset tint layers on top of any inline background). */
+  .history-row { transition: box-shadow .15s ease; }
+  .history-row:hover { box-shadow: inset 0 0 0 200px rgba(255,255,255,0.035); }
 </style>
 </head>
 <body>
@@ -384,6 +404,7 @@ const api = {
   getResults: (id) => fetch(`${API}/api/scan/${id}/results`).then(r => r.json()),
   getHistory: () => fetch(`${API}/api/scans`).then(r => r.json()),
   compare: (a, b) => fetch(`${API}/api/compare/${a}/${b}`).then(r => r.json()),
+  clearHistory: () => fetch(`${API}/api/scans`, { method: 'DELETE' }).then(r => r.json()),
 };
 
 // ─── Severity helpers ──────────────────────────────────────────────────────────
@@ -524,7 +545,7 @@ function Breadcrumb({ view, scanTarget, onBack, onHome }) {
 }
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────────
-function Sidebar({ view, onNav, history, onSelect, activeScanId, compareMode, selectedForCompare, onToggleCompare }) {
+function Sidebar({ view, onNav, history, onSelect, activeScanId, compareMode, selectedForCompare, onToggleCompare, onClearHistory }) {
   const { theme } = useContext(ThemeCtx);
   const dark = theme === 'dark';
 
@@ -566,17 +587,30 @@ function Sidebar({ view, onNav, history, onSelect, activeScanId, compareMode, se
       {/* Scan history */}
       <div className="sidebar-section-label" style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
         <span>Scan History</span>
-        {history.length >= 2 && (
-          <button onClick={onToggleCompare} style={{
-            fontSize: 9, padding: '2px 6px', borderRadius: 4,
-            background: compareMode ? '#1E88E5' : 'transparent',
-            border: `1px solid ${compareMode ? '#1E88E5' : '#2A4D73'}`,
-            color: compareMode ? '#fff' : '#5B7FA6',
-            cursor: 'pointer', letterSpacing:'0.04em',
-          }}>
-            COMPARE
-          </button>
-        )}
+        <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+          {history.length >= 2 && (
+            <button onClick={onToggleCompare} style={{
+              fontSize: 9, padding: '2px 6px', borderRadius: 4,
+              background: compareMode ? '#1E88E5' : 'transparent',
+              border: `1px solid ${compareMode ? '#1E88E5' : '#2A4D73'}`,
+              color: compareMode ? '#fff' : '#5B7FA6',
+              cursor: 'pointer', letterSpacing:'0.04em',
+            }}>
+              COMPARE
+            </button>
+          )}
+          {history.length > 0 && (
+            <button onClick={onClearHistory} title="Clear all scan history" style={{
+              fontSize: 9, padding: '2px 6px', borderRadius: 4,
+              background: 'transparent',
+              border: '1px solid #6E5A17',
+              color: '#B8960C',
+              cursor: 'pointer', letterSpacing:'0.04em',
+            }}>
+              CLEAR
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{ flex:1, overflowY:'auto', padding:'2px 0 10px' }}>
@@ -590,7 +624,7 @@ function Sidebar({ view, onNav, history, onSelect, activeScanId, compareMode, se
           const isSelected = selectedForCompare.includes(h.scan_id);
           const sc = h.severity_counts || {};
           return (
-            <div key={h.scan_id} onClick={() => onSelect(h.scan_id)} style={{
+            <div key={h.scan_id} className="history-row" onClick={() => onSelect(h.scan_id)} style={{
               padding: '9px 14px',
               cursor: 'pointer',
               background: isActive ? '#0F1F3D' : isSelected ? '#0A1E38' : 'transparent',
@@ -1441,6 +1475,8 @@ function FindingsTable({ findings }) {
               return (
                 <React.Fragment key={id}>
                   <tr
+                    className="finding-row"
+                    data-sev={(f.severity||'info').toLowerCase()}
                     onClick={() => setExpandedId(expanded ? null : id)}
                     style={{
                       cursor:'pointer',
@@ -2548,6 +2584,20 @@ function App() {
     setSelectedForCompare([]);
   };
 
+  const handleClearHistory = () => {
+    if (!window.confirm(
+      'Clear ALL scan history?\n\nThis permanently deletes every saved scan ' +
+      '(CLI and dashboard) from the shared output directory. This cannot be undone.'
+    )) return;
+    api.clearHistory()
+      .then(() => {
+        refreshHistory();
+        setView('home'); setScanId(null);
+        setCompareMode(false); setSelectedForCompare([]);
+      })
+      .catch(() => window.alert('Failed to clear history. Is the backend running?'));
+  };
+
   const activeScanId = view === 'compare' ? null : scanId;
 
   const ctxValue = { theme, toggle: () => setTheme(t => t === 'dark' ? 'light' : 'dark') };
@@ -2574,6 +2624,7 @@ function App() {
             compareMode={compareMode}
             selectedForCompare={selectedForCompare}
             onToggleCompare={toggleCompareMode}
+            onClearHistory={handleClearHistory}
           />
 
           <div style={{ display:'flex', flexDirection:'column', flex:1, overflow:'hidden' }}>
