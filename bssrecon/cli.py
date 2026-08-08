@@ -192,12 +192,17 @@ def scan(ctx, target, modules, output, report, active, monitor, accept_roe, prof
         f"  Modules: [cyan]{', '.join(n for n, _ in valid_modules)}[/cyan]\n"
     )
 
-    # Run each module
+    # Run each module. The 'score' module aggregates every other module's
+    # findings, so run it LAST and hand it the results collected so far.
+    valid_modules.sort(key=lambda nm: nm[0] == "score")
+
     results = {}
     start_time = time.time()
 
     for name, module_instance in valid_modules:
         try:
+            if name == "score":
+                module_instance.scan_results = results
             module_results = module_instance.run(target)
             results[name] = module_results
         except KeyboardInterrupt:
@@ -272,9 +277,12 @@ def _monitor_run_once(target, modules, active, config):
         if instance.is_available():
             valid.append((name, instance))
 
+    valid.sort(key=lambda nm: nm[0] == "score")  # score aggregates the rest → last
     results = {}
     for name, instance in valid:
         try:
+            if name == "score":
+                instance.scan_results = results
             results[name] = instance.run(target)
         except Exception as exc:  # keep the loop alive on a single module crash
             results[name] = {"error": str(exc)}

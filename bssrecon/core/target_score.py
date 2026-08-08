@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 from bssrecon.core import BaseModule, register_module
+from bssrecon.config import get_output_dir
 
 
 # Points per signal — tuned for bug-bounty triage priority
@@ -74,17 +75,94 @@ _PATH_WEIGHTS: list[tuple[str, str]] = [
 ]
 
 
-def _load_latest_output(output_dir: Path, target: str) -> list[dict]:
-    """Return all JSON output files for this target from the output directory."""
-    pattern = str(output_dir / f"{target}_*.json")
-    files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
-    results = []
+def _load_current_scan(output_dir: Path, target: str) -> dict:
+    """Fallback for standalone use: return the most recent saved scan for this
+    target as a {module_name: result} dict.
+
+    The CLI saves scans as "<target-with-dots-as-underscores>_<timestamp>.json"
+    (e.g. scanme_nmap_org_20260801_130958.json), so the glob MUST use the
+    underscore form — matching on the raw dotted domain never hit anything,
+    which is why the score used to come back 0."""
+    prefix = target.replace(".", "_")
+    files = sorted(
+        glob.glob(str(output_dir / f"{prefix}_*.json")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
     for f in files:
         try:
-            results.append(json.loads(Path(f).read_text(encoding="utf-8")))
+            data = json.loads(Path(f).read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
         except Exception:
             pass
-    return results
+    return {}
+
+
+def _tier(total_score: int) -> str:
+    """Human-readable priority tier for a composite score."""
+    if total_score >= 250:
+        return "CRITICAL — test immediately"
+    if total_score >= 120:
+        return "HIGH — high-value target"
+    if total_score >= 50:
+        return "MEDIUM — worth investigating"
+    if total_score > 0:
+        return "LOW — minimal surface"
+    return "MINIMAL — low attack surface"
+
+
+def _score_results(results: dict) -> tuple[int, dict, list]:
+    """Score a scan's {module_name: result} mapping by the severity and count of
+    its findings (plus a subdomain-surface bonus). This is the fix: the score
+    now reflects what every module actually found, instead of always being 0."""
+    total = 0
+    breakdown: dict[str, int] = {}
+    priority: list[dict] = []
+    sev_totals = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+
+    for module_name, data in (results or {}).items():
+        if not isinstance(data, dict):
+            continue
+        # Never let the score module's own summary finding inflate the score
+        # (matters on the disk-fallback path, where a saved scan already holds
+        # a prior score finding).
+        if str(module_name).lower() == "score":
+            continue
+
+        findings = data.get("findings", []) or []
+        fscore = _score_findings(findings)
+        if fscore:
+            breakdown[str(module_name)] = breakdown.get(str(module_name), 0) + fscore
+            total += fscore
+        for f in findings:
+            s = str(f.get("severity", "info")).lower()
+            if s in sev_totals:
+                sev_totals[s] += 1
+
+        # Subdomain surface is a count, not a finding — score it separately.
+        if "subdomain" in str(module_name).lower():
+            pts, subs = _score_subdomains(data)
+            if pts:
+                breakdown["subdomain_surface"] = breakdown.get("subdomain_surface", 0) + pts
+                total += pts
+                if subs:
+                    priority.append({
+                        "category": "Subdomain Exposure",
+                        "detail": f"{len(subs)} subdomains discovered",
+                        "points": pts,
+                    })
+
+    for sev in ("critical", "high", "medium"):
+        if sev_totals[sev]:
+            priority.append({
+                "category": f"{sev.title()}-severity findings",
+                "detail": f"{sev_totals[sev]} {sev}-severity finding(s)",
+                "points": sev_totals[sev] * _WEIGHTS[f"finding_{sev}"],
+            })
+
+    priority.sort(key=lambda x: x.get("points", 0), reverse=True)
+    return total, breakdown, priority
 
 
 def _score_findings(findings: list[dict]) -> int:
@@ -178,107 +256,16 @@ class TargetScore(BaseModule):
     mode = "passive"
 
     def run(self, target: str) -> dict:
-        output_dir = Path(
-            self.config.get("output", {}).get("output_dir", "./output")
-            if hasattr(self, "config") else "./output"
-        )
+        # Prefer the CURRENT scan's in-memory results, injected by the runner
+        # (cli.py / dashboard) right before this module runs. Falls back to the
+        # most recent saved scan on disk for standalone/report use.
+        results = getattr(self, "scan_results", None)
+        if not results:
+            output_dir = get_output_dir(getattr(self, "config", {}) or {}, create=False)
+            results = _load_current_scan(output_dir, target)
 
-        module_data = _load_latest_output(output_dir, target)
-
-        total_score = 0
-        breakdown: dict[str, int] = {}
-        priority_items: list[dict] = []
-
-        for data in module_data:
-            module_name = data.get("module", data.get("domain", "unknown"))
-            findings = data.get("findings", [])
-
-            # Universal finding score
-            fscore = _score_findings(findings)
-            if fscore:
-                breakdown[f"{module_name}_findings"] = fscore
-                total_score += fscore
-
-            # Module-specific bonus scoring
-            if "subdomains" in str(module_name):
-                pts, subs = _score_subdomains(data)
-                if pts:
-                    breakdown["subdomains"] = pts
-                    total_score += pts
-                    if subs:
-                        priority_items.append({
-                            "category": "Subdomain Exposure",
-                            "detail": f"{len(subs)} subdomains discovered",
-                            "points": pts,
-                        })
-
-            elif "ssl" in str(module_name):
-                pts = _score_ssl(data)
-                if pts:
-                    breakdown["ssl"] = pts
-                    total_score += pts
-
-            elif "dns" in str(module_name):
-                pts, gaps = _score_dns(data)
-                if pts:
-                    breakdown["dns_email_security"] = pts
-                    total_score += pts
-                    for g in gaps:
-                        priority_items.append({
-                            "category": "Email Security Gap",
-                            "detail": g,
-                            "points": _WEIGHTS.get(f"no_{g.split()[-1].lower()}", 0),
-                        })
-
-            elif "webprobe" in str(module_name):
-                pts, hits = _score_webprobe(data)
-                if pts:
-                    breakdown["exposed_paths"] = pts
-                    total_score += pts
-                    for h in hits:
-                        priority_items.append({
-                            "category": "Exposed Sensitive Path",
-                            "detail": h,
-                            "points": 0,
-                        })
-
-            elif "jsanalyze" in str(module_name):
-                pts = _score_js(data)
-                if pts:
-                    breakdown["js_secrets"] = pts
-                    total_score += pts
-                    priority_items.append({
-                        "category": "Potential JS Secrets",
-                        "detail": f"{data.get('total_secrets', '?')} patterns matched",
-                        "points": pts,
-                    })
-
-            elif "wafdetect" in str(module_name):
-                pts = _score_waf(data)
-                if pts:
-                    breakdown["no_waf"] = pts
-                    total_score += pts
-
-            elif "techdetect" in str(module_name):
-                pts = _score_tech(data)
-                if pts:
-                    breakdown["tech_stack"] = pts
-                    total_score += pts
-
-        # Sort priority items highest-scoring first
-        priority_items.sort(key=lambda x: x.get("points", 0), reverse=True)
-
-        # Derive a human-readable priority tier
-        if total_score >= 300:
-            tier = "CRITICAL — test immediately"
-        elif total_score >= 150:
-            tier = "HIGH — high-value target"
-        elif total_score >= 75:
-            tier = "MEDIUM — worth investigating"
-        elif total_score >= 20:
-            tier = "LOW — minimal surface"
-        else:
-            tier = "MINIMAL — low attack surface"
+        total_score, breakdown, priority_items = _score_results(results)
+        tier = _tier(total_score)
 
         findings = [
             {

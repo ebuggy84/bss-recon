@@ -284,14 +284,21 @@ def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | No
     })
 
     all_findings: list[dict] = []
+    results_map: dict[str, Any] = {}  # raw per-module results, for the score module
 
-    for name, mod in to_run.items():
+    # 'score' aggregates every other module's findings, so run it LAST and give
+    # it the results collected so far (otherwise it always scored 0).
+    ordered = sorted(to_run.items(), key=lambda kv: kv[0] == "score")
+    for name, mod in ordered:
         with _lock:
             _scans[scan_id]["modules"][name]["status"] = "running"
         _push(scan_id, {"type": "module_start", "module": name})
 
         try:
+            if name == "score":
+                mod.scan_results = results_map
             result = mod.run(target)
+            results_map[name] = result
             findings = result.get("findings", [])
             for f in findings:
                 f.setdefault("module", name)
