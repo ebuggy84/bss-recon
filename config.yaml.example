@@ -46,3 +46,30 @@ default_modules:
   - hunter
   - score
   # - virustotal      # Uncomment when you add your API key
+  # NOTE: 'nuclei' is deliberately NOT a default module. It is an ACTIVE
+  # scanner that fires real probes and only runs with --active --accept-roe.
+
+# ─── Scope enforcement (REQUIRED for active modules) ─────────────────────
+# Active modules (nuclei, webprobe, nmap, ...) refuse to touch a target that
+# isn't in scope. Point this at your per-engagement scope file; if omitted,
+# <repo root>/scope.yaml is used. See bssrecon/scope.example.yaml.
+# With no scope file at all, active scanning runs UNENFORCED and is flagged.
+scope:
+  file: "./scope.yaml"
+
+# ─── Nuclei (active vulnerability scanner) ───────────────────────────────
+nuclei:
+  # Politeness. Both default to the scan profile (stealth/balanced/aggressive);
+  # set these to override and pin an explicit rate for a fragile target.
+  rate_limit: 15       # max requests/second (-rl)
+  concurrency: 5       # parallel templates (-c)
+
+  # Nuclei's template library updates separately from the binary and changes
+  # daily. Scans always run with -duc so they never stall or shift behaviour
+  # mid-engagement; set this true to explicitly refresh templates first.
+  update_templates: false
+  update_timeout: 180
+
+  # Optional: force a specific URL/scheme. Default sends the bare hostname so
+  # nuclei probes both http and https.
+  # target_url: "https://example.com"

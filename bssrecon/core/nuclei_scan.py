@@ -1,12 +1,44 @@
 """
 Nuclei Scan Module — wraps the Nuclei vulnerability scanner (projectdiscovery.io).
 
-Runs nuclei with default templates against the target, parses the JSONL output,
-and converts each finding into the standard bss-recon findings format.
+Runs nuclei with its template library against the target, parses the JSONL
+output, and converts each finding into the standard bss-recon findings format.
 
 Requires nuclei to be installed and on PATH. Install:
     go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
     nuclei -update-templates
+If the binary is missing the module skips gracefully (it never crashes a scan).
+
+────────────────────────────────────────────────────────────────────────────
+SAFETY — READ BEFORE EDITING
+────────────────────────────────────────────────────────────────────────────
+This module sends REAL probes at a target. Three guardrails are mandatory:
+
+1. SCOPE ENFORCEMENT. Every target passes ScopeGuard.check_target() BEFORE a
+   single template fires. Out-of-scope targets are quarantined and logged, and
+   nuclei is never invoked. If the scope file exists but is malformed we FAIL
+   CLOSED (refuse to scan) — a broken scope file must never silently degrade
+   into "no enforcement". If no scope file is configured at all we warn loudly
+   and record that the scan ran unenforced.
+
+2. ACTIVE-ONLY. mode = "active", so the CLI (without --active/--accept-roe) and
+   the dashboard's "Passive mode only (OSINT)" toggle both exclude this module
+   entirely. Never change mode to "passive".
+
+3. RATE LIMITING. Requests/sec come from the scan profile (stealth/balanced/
+   aggressive) and can be overridden with config nuclei.rate_limit, so the
+   operator controls how hard the target is hit.
+
+────────────────────────────────────────────────────────────────────────────
+TEMPLATE FRESHNESS
+────────────────────────────────────────────────────────────────────────────
+Nuclei's detection power comes from a community template library that ships
+separately from the binary and changes daily. Nuclei can self-update it.
+This module deliberately runs scans with -duc (disable-update-check) so a scan
+never stalls or silently changes behaviour mid-engagement, and instead offers
+an explicit refresh: set config nuclei.update_templates: true (or call
+update_templates()) to run `nuclei -update-templates` before scanning. Keep
+templates current — stale templates silently miss new CVEs.
 
 Mode: active — only runs when --active flag is passed. Requires authorization.
 """
@@ -14,6 +46,7 @@ Mode: active — only runs when --active flag is passed. Requires authorization.
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -270,6 +303,81 @@ def _parse_nuclei_line(line: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Safety helpers — scope enforcement, template freshness, KEV cross-reference
+# ---------------------------------------------------------------------------
+
+def _log(msg: str) -> None:
+    print(f"[BSS Nuclei] {msg}", file=sys.stderr)
+
+
+def update_templates(timeout: int = 180) -> bool:
+    """Refresh the nuclei template library (`nuclei -update-templates`).
+
+    Best-effort: returns True on success, False otherwise. Never raises — a
+    failed template refresh degrades detection coverage but must not break a
+    scan.
+    """
+    if not shutil.which("nuclei"):
+        return False
+    try:
+        proc = subprocess.run(
+            ["nuclei", "-update-templates", "-silent"],
+            timeout=timeout, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, check=False,
+        )
+        ok = proc.returncode == 0
+        _log("template library updated" if ok else "template update returned non-zero")
+        return ok
+    except Exception as exc:
+        _log(f"template update failed ({exc}); continuing with existing templates")
+        return False
+
+
+def _kev_cross_reference(findings: list[dict], config: dict | None) -> int:
+    """Escalate any CVE nuclei found that is on the CISA KEV catalog.
+
+    Nuclei reports its own severity from the template; a CVE that is actively
+    exploited in the wild outranks that, so it gets bumped to critical by the
+    shared KEV engine. Returns the number escalated. Never raises.
+    """
+    try:
+        from bssrecon.kev_check import escalate_findings
+        return len(escalate_findings(findings, config))
+    except Exception as exc:
+        _log(f"KEV cross-reference skipped: {exc}")
+        return 0
+
+
+def _quarantine_result(target: str, reason: str, scope_path) -> dict:
+    """Result returned when a target FAILS the scope check. Nuclei is not run."""
+    _log(f"BLOCKED — refusing to scan out-of-scope target '{target}': {reason}")
+    return {
+        "domain": target,
+        "status": "QUARANTINED",
+        "nuclei_available": True,
+        "nuclei_ran": False,
+        "scope_enforced": True,
+        "scope_file": str(scope_path) if scope_path else None,
+        "out_of_scope_reason": reason,
+        "findings": [{
+            "severity": "info",
+            "title": "Nuclei skipped — target out of scope",
+            "detail": (
+                f"Active scanning of '{target}' was blocked by the engagement scope "
+                f"guard before any probe was sent. Reason: {reason}"
+            ),
+            "owasp": "",
+            "mitre": "",
+            "remediation": (
+                "If this target is genuinely in scope, add it to the scope file's "
+                "allowed_domains (and allowed_cidrs if IP-restricted). Otherwise "
+                "leave it blocked — scanning it may be unauthorised."
+            ),
+        }],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Module
 # ---------------------------------------------------------------------------
 
@@ -281,11 +389,69 @@ class NucleiScan(BaseModule):
     api_key_name = None
     mode = "active"
 
+    def _scope_gate(self, target: str) -> tuple[bool, dict | None, dict]:
+        """MANDATORY pre-flight scope check. Nothing may probe `target` until
+        this returns allowed=True.
+
+        Returns (allowed, blocked_result_or_None, scope_meta). Fails CLOSED on
+        any guard error: if we cannot prove a target is in scope, we do not
+        scan it.
+        """
+        config = getattr(self, "config", {}) or {}
+
+        try:
+            from bssrecon.scope_guard import load_guard, ScopeFileError
+        except Exception as exc:
+            reason = (f"Scope guard unavailable ({exc}); refusing to run active "
+                      f"scanning without scope enforcement")
+            return False, _quarantine_result(target, reason, None), {"scope_enforced": True}
+
+        try:
+            guard, scope_path = load_guard(config)
+        except ScopeFileError as exc:
+            # Malformed scope file → fail closed. Never downgrade to "unenforced".
+            return False, _quarantine_result(target, str(exc), None), {"scope_enforced": True}
+
+        if guard is None:
+            # No scope file configured anywhere. Allowed, but loudly flagged.
+            _log("WARNING: no scope file configured — active scanning is running "
+                 "WITHOUT scope enforcement. Create scope.yaml (see "
+                 "bssrecon/scope.example.yaml) before engagement work.")
+            return True, None, {
+                "scope_enforced": False,
+                "scope_file": None,
+                "scope_warning": (
+                    "Active scanning ran without scope enforcement — no scope file "
+                    "configured."
+                ),
+            }
+
+        ok, reason = guard.check_target(target)
+        if not ok:
+            return False, _quarantine_result(target, reason, scope_path), {"scope_enforced": True}
+
+        _log(f"scope OK for '{target}' ({guard.program_name}): {reason}")
+        return True, None, {
+            "scope_enforced": True,
+            "scope_file": str(scope_path),
+            "scope_program": guard.program_name,
+            "scope_reason": reason,
+        }
+
     def run(self, target: str) -> dict:
+        # ── GUARDRAIL 1: scope enforcement ────────────────────────────────
+        # This MUST stay first. No nuclei template may fire at a target that
+        # has not passed the engagement scope guard.
+        allowed, blocked, scope_meta = self._scope_gate(target)
+        if not allowed:
+            return blocked
+
         if not shutil.which("nuclei"):
             return {
                 "domain": target,
                 "nuclei_available": False,
+                "nuclei_ran": False,
+                **scope_meta,
                 "findings": [{
                     "severity": "info",
                     "title": "Nuclei Not Installed",
@@ -301,6 +467,12 @@ class NucleiScan(BaseModule):
             }
 
         scan_cfg = self.config.get("scan", {}) if hasattr(self, "config") else {}
+        nuclei_cfg = self.config.get("nuclei", {}) if hasattr(self, "config") else {}
+
+        # Template freshness is opt-in so a scan never stalls on a surprise
+        # multi-minute update mid-engagement (see TEMPLATE FRESHNESS above).
+        if nuclei_cfg.get("update_templates", False):
+            update_templates(int(nuclei_cfg.get("update_timeout", 180)))
         timeout_secs = int(scan_cfg.get("timeout", 10)) * 60  # config timeout is per-request; give nuclei minutes
 
         # Build command
@@ -309,8 +481,8 @@ class NucleiScan(BaseModule):
         # -silent      : no banner/progress to stdout (findings only)
         # -rl          : rate-limit requests per second
         # -timeout     : per-request timeout in seconds
+        # -duc         : never auto-update mid-scan (see TEMPLATE FRESHNESS)
         # -no-interactsh: disable OOB callbacks (no external dependency in passive mode)
-        rate_limit = scan_cfg.get("rate_limit", 1.0)
         user_agent = scan_cfg.get("user_agent", "BSS-Recon/1.5 (Security Assessment)")
 
         with tempfile.NamedTemporaryFile(
@@ -318,20 +490,43 @@ class NucleiScan(BaseModule):
         ) as tmp:
             output_file = tmp.name
 
+        # Pass the BARE host by default so nuclei probes both http and https.
+        # (Hardcoding https:// silently produced zero findings against hosts that
+        # serve plain HTTP or have 443 closed.) Override with nuclei.target_url.
+        target_arg = nuclei_cfg.get("target_url") or target
+
         cmd = [
             "nuclei",
-            "-target", f"https://{target}",
+            "-target", target_arg,
             "-jsonl",
             "-output", output_file,
             "-silent",
             "-no-interactsh",
+            "-duc",
             "-timeout", str(scan_cfg.get("timeout", 10)),
             "-H", f"User-Agent: {user_agent}",
         ]
 
+        # ── GUARDRAIL 3: rate limiting ────────────────────────────────────
         # Concurrency (-c) + rate-limit (-rl) come from the active scan profile
         # (stealth/balanced/aggressive) so the operator controls scan intensity.
-        cmd += self.concurrency.nuclei_flags()
+        profile_flags = list(self.concurrency.nuclei_flags())
+
+        # Explicit config override wins over the profile, so an operator can
+        # dial politeness per engagement (e.g. a target behind a twitchy WAF):
+        #   nuclei: {rate_limit: 10, concurrency: 5}
+        rate_override = nuclei_cfg.get("rate_limit")
+        conc_override = nuclei_cfg.get("concurrency")
+        for flag, value in (("-rl", rate_override), ("-c", conc_override)):
+            if value is None:
+                continue
+            if flag in profile_flags:
+                profile_flags[profile_flags.index(flag) + 1] = str(int(value))
+            else:
+                profile_flags += [flag, str(int(value))]
+        cmd += profile_flags
+        effective_rate = (profile_flags[profile_flags.index("-rl") + 1]
+                          if "-rl" in profile_flags else "default")
 
         # Inject HackerOne researcher header if configured
         h1 = None
@@ -378,6 +573,31 @@ class NucleiScan(BaseModule):
             except OSError:
                 pass
 
+        # Cross-reference nuclei's CVEs against CISA KEV — an actively-exploited
+        # CVE outranks whatever severity the template assigned, so it gets
+        # escalated to critical and badged in the dashboard.
+        kev_escalated = _kev_cross_reference(findings, getattr(self, "config", None))
+
+        # Surface the "ran without scope enforcement" warning as a visible
+        # finding (info severity — it's an operator-config issue, not a flaw in
+        # the target, so it must not distort the target's risk score).
+        if scope_meta.get("scope_warning"):
+            findings.append({
+                "severity": "info",
+                "title": "Active scan ran without scope enforcement",
+                "detail": (
+                    f"Nuclei actively scanned '{target}' but no engagement scope file "
+                    f"was configured, so no scope guard was applied. Create scope.yaml "
+                    f"(see bssrecon/scope.example.yaml) and re-run for enforced scanning."
+                ),
+                "owasp": "",
+                "mitre": "",
+                "remediation": (
+                    "Define allowed_domains/allowed_cidrs in scope.yaml before running "
+                    "active modules during an engagement."
+                ),
+            })
+
         # Sort critical → info
         _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
         findings.sort(key=lambda f: _sev_rank.get(f["severity"], 5))
@@ -391,7 +611,11 @@ class NucleiScan(BaseModule):
         return {
             "domain": target,
             "nuclei_available": True,
+            "nuclei_ran": True,
             "raw_finding_count": raw_count,
+            "kev_escalated": kev_escalated,
+            "rate_limit": effective_rate,
+            **scope_meta,
             "findings": findings,
             "severity_counts": severity_counts,
         }
