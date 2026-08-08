@@ -41,3 +41,6 @@ node_modules/
 
 # One-off local patch scripts (not part of the tool)
 patches/
+
+# KEV catalog cache
+cache/
