@@ -238,6 +238,45 @@ def _sev_counts(findings: list[dict]) -> dict[str, int]:
     return c
 
 
+_kev_catalog = None  # process-cached KEV catalog (index built once, cache-backed)
+
+
+def _get_kev_catalog():
+    global _kev_catalog
+    if _kev_catalog is None:
+        from bssrecon.kev_check import KevCatalog  # type: ignore
+        from bssrecon.config import load_config  # type: ignore
+        _kev_catalog = KevCatalog(load_config())
+    return _kev_catalog
+
+
+def _apply_kev(results_map: dict) -> list:
+    """Escalate KEV-matched CVE findings to critical across a scan's results
+    ({module: {findings}}). Never raises — a KEV/network problem must not break
+    a scan."""
+    try:
+        from bssrecon.kev_check import escalate_results  # type: ignore
+        from bssrecon.config import load_config  # type: ignore
+        return escalate_results(results_map, load_config(), catalog=_get_kev_catalog())
+    except Exception as exc:
+        import sys
+        print(f"[BSS Dashboard] KEV check skipped: {exc}", file=sys.stderr)
+        return []
+
+
+def _apply_kev_findings(findings: list) -> list:
+    """Escalate KEV matches over a flat findings list (used when reading saved
+    scans so existing scans are cross-referenced on view too). Cache-backed."""
+    try:
+        from bssrecon.kev_check import escalate_findings  # type: ignore
+        from bssrecon.config import load_config  # type: ignore
+        return escalate_findings(findings or [], load_config(), catalog=_get_kev_catalog())
+    except Exception as exc:
+        import sys
+        print(f"[BSS Dashboard] KEV read-path skipped: {exc}", file=sys.stderr)
+        return []
+
+
 def _surface_score(results_map: dict) -> tuple:
     """Compute the unified 0-100 attack-surface score + tier using the SAME math
     as the score module (saturating curve + subdomain surface + tier bands), so
@@ -313,6 +352,9 @@ def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | No
 
         try:
             if name == "score":
+                # Cross-reference CISA KEV before scoring so actively-exploited
+                # CVEs are already escalated to critical when the score runs.
+                _apply_kev(results_map)
                 mod.scan_results = results_map
             result = mod.run(target)
             results_map[name] = result
@@ -360,6 +402,7 @@ def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | No
                 "total": _scans[scan_id]["total_modules"],
             })
 
+    _apply_kev(results_map)  # idempotent fallback if the score module wasn't run
     sev = _sev_counts(all_findings)
     surface_score, surface_raw, surface_tier = _surface_score(results_map)
     finished_at = datetime.now(timezone.utc).isoformat()
@@ -536,10 +579,16 @@ def _apply_surface_score(record: dict) -> dict:
 
 
 def _read_record(path: Path) -> dict:
-    """Read a scan file, normalizing CLI-format files to the dashboard shape and
-    attaching the unified attack-surface score."""
+    """Read a scan file, normalizing CLI-format files to the dashboard shape,
+    cross-referencing CISA KEV, and attaching the unified attack-surface score.
+    KEV escalation on read means scans saved before the feature are still flagged
+    when viewed (using the local KEV cache — no per-read network call)."""
     raw = json.loads(path.read_text(encoding="utf-8"))
     record = _normalize_cli_record(raw, path) if _looks_like_cli_format(raw) else raw
+    _apply_kev_findings(record.get("findings"))
+    # KEV may have escalated severities — refresh the counts so the donut, stat
+    # cards, and sidebar pills match the (now critical) findings.
+    record["severity_counts"] = _sev_counts(record.get("findings") or [])
     return _apply_surface_score(record)
 
 
