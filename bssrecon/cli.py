@@ -33,6 +33,24 @@ from bssrecon.utils.display import (
 )
 
 
+def _apply_kev(results, config):
+    """Cross-reference scan findings against the CISA KEV catalog and escalate
+    matches to critical. Never lets a KEV/network problem break a scan."""
+    try:
+        from bssrecon.kev_check import escalate_results
+        escalated = escalate_results(results, config)
+        if escalated:
+            rw = sum(1 for m in escalated if m.get("ransomware"))
+            print_warning(
+                f"[KEV] {len(escalated)} actively-exploited CVE(s) escalated to CRITICAL"
+                + (f" ({rw} ransomware-linked)" if rw else "")
+            )
+        return escalated
+    except Exception as exc:
+        print_warning(f"KEV check skipped: {exc}")
+        return []
+
+
 @click.group()
 @click.option("--config", "-c", default=None, help="Path to config.yaml")
 @click.pass_context
@@ -193,7 +211,8 @@ def scan(ctx, target, modules, output, report, active, monitor, accept_roe, prof
     )
 
     # Run each module. The 'score' module aggregates every other module's
-    # findings, so run it LAST and hand it the results collected so far.
+    # findings, so run it LAST — and cross-reference CISA KEV FIRST so any
+    # actively-exploited CVE is already escalated to critical when scoring runs.
     valid_modules.sort(key=lambda nm: nm[0] == "score")
 
     results = {}
@@ -202,6 +221,7 @@ def scan(ctx, target, modules, output, report, active, monitor, accept_roe, prof
     for name, module_instance in valid_modules:
         try:
             if name == "score":
+                _apply_kev(results, config)
                 module_instance.scan_results = results
             module_results = module_instance.run(target)
             results[name] = module_results
@@ -211,6 +231,10 @@ def scan(ctx, target, modules, output, report, active, monitor, accept_roe, prof
         except Exception as e:
             print_error(f"Module '{name}' crashed: {str(e)}")
             results[name] = {"error": str(e)}
+
+    # Escalate KEV matches even when the score module wasn't selected
+    # (idempotent — already-flagged findings are skipped).
+    _apply_kev(results, config)
 
     elapsed = time.time() - start_time
     print_scan_summary(target, results, elapsed)
@@ -282,10 +306,12 @@ def _monitor_run_once(target, modules, active, config):
     for name, instance in valid:
         try:
             if name == "score":
+                _apply_kev(results, config)
                 instance.scan_results = results
             results[name] = instance.run(target)
         except Exception as exc:  # keep the loop alive on a single module crash
             results[name] = {"error": str(exc)}
+    _apply_kev(results, config)  # idempotent fallback if score wasn't selected
     return results
 
 

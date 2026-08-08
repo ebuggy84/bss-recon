@@ -24,6 +24,10 @@ _WEIGHTS = {
     "finding_low":              5,
     "finding_info":             1,
 
+    # Actively-exploited (CISA KEV) — extra weight ON TOP of the critical the
+    # finding is escalated to, so a known-exploited CVE dominates the score.
+    "kev_actively_exploited":  75,
+
     # Subdomain surface
     "subdomain_each":           3,
     "subdomain_10plus":        15,   # bonus for large subdomain count
@@ -135,6 +139,7 @@ def _score_results(results: dict) -> tuple[int, dict, list]:
     breakdown: dict[str, int] = {}
     priority: list[dict] = []
     sev_totals = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    kev_count = 0
 
     for module_name, data in (results or {}).items():
         if not isinstance(data, dict):
@@ -154,6 +159,8 @@ def _score_results(results: dict) -> tuple[int, dict, list]:
             s = str(f.get("severity", "info")).lower()
             if s in sev_totals:
                 sev_totals[s] += 1
+            if isinstance(f, dict) and f.get("kev"):
+                kev_count += 1
 
         # Subdomain surface is a count, not a finding — score it separately.
         if "subdomain" in str(module_name).lower():
@@ -167,6 +174,18 @@ def _score_results(results: dict) -> tuple[int, dict, list]:
                         "detail": f"{len(subs)} subdomains discovered",
                         "points": pts,
                     })
+
+    # Actively-exploited (CISA KEV) bonus — makes known-exploited CVEs weigh
+    # heavily, on top of the critical severity they were escalated to.
+    if kev_count:
+        kev_bonus = kev_count * _WEIGHTS["kev_actively_exploited"]
+        breakdown["kev_actively_exploited"] = kev_bonus
+        total += kev_bonus
+        priority.append({
+            "category": "Actively Exploited (CISA KEV)",
+            "detail": f"{kev_count} CVE(s) on the CISA Known Exploited Vulnerabilities catalog",
+            "points": kev_bonus,
+        })
 
     for sev in ("critical", "high", "medium"):
         if sev_totals[sev]:
