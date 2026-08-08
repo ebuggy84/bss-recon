@@ -363,6 +363,68 @@ tailwind.config = {
      background (inset tint layers on top of any inline background). */
   .history-row { transition: box-shadow .15s ease; }
   .history-row:hover { box-shadow: inset 0 0 0 200px rgba(255,255,255,0.035); }
+
+  /* ══ Brand logo + tab hover polish ═════════════════════════════ */
+  .brand-logo svg { transition: transform .25s var(--ease); }
+  .brand-logo:hover svg { transform: translateY(-1px) scale(1.04); }
+  .results-tab:hover { color: #E4C04A !important; }
+
+  /* ══ Per-module findings cards ═════════════════════════════════ */
+  .module-finding-card {
+    padding: 0; overflow: hidden; display: flex; flex-direction: column;
+    transition: transform .2s var(--ease), box-shadow .25s ease, border-color .2s ease;
+  }
+  .module-finding-card:hover { transform: translateY(-3px); box-shadow: var(--elev-3); }
+  .mfc-head {
+    display: flex; align-items: center; gap: 9px; padding: 12px 14px;
+    border-bottom: 1px solid #142438; background: rgba(255,255,255,0.015);
+  }
+  .mfc-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    box-shadow: 0 0 8px currentColor; }
+  .mfc-name { font-family: 'Inter', monospace; font-weight: 800; font-size: 13px;
+    color: #E8EEF7; letter-spacing: 0.01em; text-transform: capitalize; }
+  .mfc-count { font-size: 10px; font-weight: 700; color: #8FA6C4; background: rgba(255,255,255,0.06);
+    border-radius: 999px; padding: 1px 8px; font-variant-numeric: tabular-nums; }
+  .mfc-body { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .mfc-item {
+    background: #0A1424; border-radius: 7px; padding: 9px 11px; cursor: pointer;
+    transition: background .15s ease, transform .12s ease;
+  }
+  .mfc-item:hover { background: #0F1E38; transform: translateX(2px); }
+  .mfc-expander {
+    width: 100%; margin-top: 2px; padding: 7px; border-radius: 7px; cursor: pointer;
+    background: transparent; border: 1px dashed #1B3050; color: #7FB0E6;
+    font-size: 11px; font-weight: 700; font-family: inherit; letter-spacing: 0.02em;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+  }
+  .mfc-expander:hover { background: rgba(66,133,244,0.08); border-color: #2A4D73; color: #A9CBF0; }
+
+  /* ══ Compliance view ═══════════════════════════════════════════ */
+  .compliance-band {
+    display: flex; align-items: center; gap: 22px; padding: 18px 22px; flex-wrap: wrap;
+  }
+  .compliance-finding { padding: 16px 18px; transition: transform .2s var(--ease), box-shadow .25s ease; }
+  .compliance-finding:hover { transform: translateY(-2px); box-shadow: var(--elev-3); }
+  .compliance-evidence {
+    font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 12px; color: #9FB3CC;
+    background: #050C18; border: 1px solid #122238; border-radius: 6px; padding: 8px 11px;
+    line-height: 1.5; word-break: break-word;
+  }
+  .ctrl-chip {
+    font-size: 11px; font-weight: 700; padding: 3px 11px; border-radius: 999px;
+    letter-spacing: 0.02em; border: 1px solid transparent; white-space: normal;
+  }
+  .chip-nist { background: rgba(66,133,244,0.14); color: #7FB0E6; border-color: rgba(66,133,244,0.32); }
+  .chip-cis  { background: rgba(52,211,153,0.13); color: #5EE0A8; border-color: rgba(52,211,153,0.30); }
+  .chip-soc  { background: rgba(184,150,12,0.16); color: #E4C04A; border-color: rgba(184,150,12,0.40); }
+
+  .btn-gold {
+    background: linear-gradient(135deg, #E4C04A, #B8960C); border: none; border-radius: 7px;
+    color: #1A1A1F; font-size: 11.5px; font-weight: 800; padding: 8px 16px; cursor: pointer;
+    letter-spacing: 0.02em; box-shadow: 0 2px 10px rgba(184,150,12,0.28);
+    transition: transform .15s ease, box-shadow .2s ease, filter .2s ease;
+  }
+  .btn-gold:hover { transform: translateY(-1px); filter: brightness(1.08); box-shadow: 0 4px 16px rgba(184,150,12,0.42); }
 </style>
 </head>
 <body>
@@ -405,6 +467,10 @@ const api = {
   getHistory: () => fetch(`${API}/api/scans`).then(r => r.json()),
   compare: (a, b) => fetch(`${API}/api/compare/${a}/${b}`).then(r => r.json()),
   clearHistory: () => fetch(`${API}/api/scans`, { method: 'DELETE' }).then(r => r.json()),
+  getCompliance: (id) => fetch(`${API}/api/scan/${id}/compliance`).then(r => {
+    if (!r.ok) throw new Error('compliance ' + r.status);
+    return r.json();
+  }),
 };
 
 // ─── Severity helpers ──────────────────────────────────────────────────────────
@@ -451,17 +517,25 @@ function TopBar({ view, scanTarget, onHome }) {
   const scanning = view === 'scanning';
   return (
     <header className="appbar">
-      {/* Logo */}
-      <div onClick={onHome} style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer', flexShrink:0 }}>
-        <div style={{
-          width:34, height:34, borderRadius:8, background:'linear-gradient(135deg,#1E88E5,#0D47A1)',
-          display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, fontWeight:900,
-          color:'#fff', fontFamily:'monospace', letterSpacing:'-1px',
-          boxShadow:'0 0 0 1px rgba(184,150,12,0.55), 0 2px 10px rgba(0,0,0,0.4)',
-        }}>BSS</div>
+      {/* Logo — BSS shield mark */}
+      <div onClick={onHome} className="brand-logo" style={{ display:'flex', alignItems:'center', gap:11, cursor:'pointer', flexShrink:0 }}>
+        <svg width="34" height="34" viewBox="0 0 40 40" aria-label="BSS shield" style={{ flexShrink:0, filter:'drop-shadow(0 2px 6px rgba(0,0,0,0.45))' }}>
+          <defs>
+            <linearGradient id="shieldFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#26263F"/><stop offset="1" stopColor="#14141F"/>
+            </linearGradient>
+            <linearGradient id="shieldEdge" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stopColor="#E4C04A"/><stop offset="1" stopColor="#B8960C"/>
+            </linearGradient>
+          </defs>
+          <path d="M20 2.5 L35 8 V20 C35 29 28.5 35.5 20 38 C11.5 35.5 5 29 5 20 V8 Z"
+                fill="url(#shieldFill)" stroke="url(#shieldEdge)" strokeWidth="2" strokeLinejoin="round"/>
+          <text x="20" y="24.5" textAnchor="middle" fontSize="12.5" fontWeight="900"
+                fontFamily="Inter, system-ui, sans-serif" fill="url(#shieldEdge)" letterSpacing="-0.5">BSS</text>
+        </svg>
         <div style={{ lineHeight:1.15 }}>
           <div style={{ fontSize:13.5, fontWeight:800, color:'#F1F5FB' }}>BSS Recon</div>
-          <div style={{ fontSize:9.5, color:'#B8960C', fontWeight:600, letterSpacing:'0.04em' }}>Security Platform</div>
+          <div style={{ fontSize:9.5, color:'#B8960C', fontWeight:600, letterSpacing:'0.06em', textTransform:'uppercase' }}>Security Platform</div>
         </div>
       </div>
 
@@ -1539,6 +1613,244 @@ function FindingsTable({ findings }) {
   );
 }
 
+// ─── Findings grouped into per-module cards (severity colour-coded) ──────────────
+const MODULE_CARD_LIMIT = 6;  // top findings shown per module before "show all"
+
+function FindingsByModule({ findings }) {
+  const [filterSev, setFilterSev] = useState([]);
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState({});
+  const [showAll, setShowAll] = useState({});
+
+  const filtered = useMemo(() => (findings || []).filter(f => {
+    if (filterSev.length && !filterSev.includes((f.severity||'info').toLowerCase())) return false;
+    if (q) {
+      const t = q.toLowerCase();
+      return (f.title||'').toLowerCase().includes(t)
+          || (f.detail||'').toLowerCase().includes(t)
+          || (f.module||'').toLowerCase().includes(t)
+          || (f.owasp||'').toLowerCase().includes(t);
+    }
+    return true;
+  }), [findings, filterSev, q]);
+
+  const groups = useMemo(() => {
+    const g = {};
+    filtered.forEach(f => { const m = f.module || 'other'; (g[m] = g[m] || []).push(f); });
+    Object.values(g).forEach(arr => arr.sort((a,b) => sevRank(a.severity) - sevRank(b.severity)));
+    return Object.entries(g).sort((a,b) => {
+      const wa = Math.min(...a[1].map(x => sevRank(x.severity)));
+      const wb = Math.min(...b[1].map(x => sevRank(x.severity)));
+      return wa - wb || b[1].length - a[1].length;
+    });
+  }, [filtered]);
+
+  if (!findings || !findings.length) return (
+    <div className="card" style={{ padding:'32px', textAlign:'center', color:'#3B6B96', fontSize:13 }}>
+      No findings recorded for this scan.
+    </div>
+  );
+
+  return (
+    <div className="fade-in">
+      {/* Filter bar */}
+      <div className="card" style={{ padding:'10px 12px', display:'flex', gap:8, flexWrap:'wrap',
+        alignItems:'center', marginBottom:14 }}>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search findings…"
+          style={{ background:'#050C18', border:'1px solid #162843', borderRadius:6,
+            color:'#C9D6E8', fontSize:11.5, padding:'6px 10px', flex:1, minWidth:160 }}/>
+        <div style={{ display:'flex', gap:4 }}>
+          {SEV_ORDER.map(s => (
+            <button key={s} onClick={() => setFilterSev(p => p.includes(s) ? p.filter(x=>x!==s) : [...p,s])}
+              style={{ fontSize:9.5, padding:'4px 9px', borderRadius:5, fontWeight:700, fontFamily:'monospace',
+                background: filterSev.includes(s) ? sevColors[s]+'26' : 'transparent',
+                border: `1px solid ${filterSev.includes(s) ? sevColors[s] : '#1B3050'}`,
+                color: filterSev.includes(s) ? sevColors[s] : '#3B6B96', cursor:'pointer',
+                letterSpacing:'0.04em', textTransform:'uppercase' }}>{s}</button>
+          ))}
+        </div>
+        <span style={{ fontSize:10.5, color:'#3B6B96', marginLeft:'auto', fontVariantNumeric:'tabular-nums' }}>
+          {filtered.length}/{findings.length}
+        </span>
+      </div>
+
+      {/* Per-module cards */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(340px, 1fr))', gap:14 }}>
+        {groups.map(([mod, items]) => {
+          const worst = items.map(x => (x.severity||'info').toLowerCase())
+            .sort((a,b) => sevRank(a) - sevRank(b))[0];
+          const accent = sevColors[worst] || '#64748B';
+          const counts = {};
+          items.forEach(x => { const s = (x.severity||'info').toLowerCase(); counts[s] = (counts[s]||0)+1; });
+          return (
+            <div key={mod} className="module-finding-card card" style={{ borderTop:`3px solid ${accent}` }}>
+              <div className="mfc-head">
+                <span className="mfc-dot" style={{ background:accent }}/>
+                <span className="mfc-name">{mod}</span>
+                <span className="mfc-count">{items.length}</span>
+                <span style={{ marginLeft:'auto', display:'flex', gap:6 }}>
+                  {SEV_ORDER.filter(s => counts[s]).map(s => (
+                    <span key={s} style={{ fontSize:9.5, fontWeight:800, color:sevColors[s],
+                      fontFamily:'monospace' }}>{counts[s]}{s[0].toUpperCase()}</span>
+                  ))}
+                </span>
+              </div>
+              {(() => {
+              const isExpanded = showAll[mod];
+              const shown = isExpanded ? items : items.slice(0, MODULE_CARD_LIMIT);
+              const hidden = items.length - shown.length;
+              return (
+              <div className="mfc-body" style={isExpanded ? { maxHeight:430, overflowY:'auto' } : undefined}>
+                {shown.map((f, i) => {
+                  const id = mod + i;
+                  const isOpen = open[id];
+                  const c = sevColors[(f.severity||'info').toLowerCase()] || '#64748B';
+                  return (
+                    <div key={id} className="mfc-item" style={{ borderLeft:`3px solid ${c}` }}
+                      onClick={() => setOpen(p => ({ ...p, [id]: !p[id] }))}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                        <SevBadge sev={f.severity} small/>
+                        <span style={{ fontSize:12.5, color:'#E2E8F0', fontWeight:600, flex:1,
+                          overflow:'hidden', textOverflow:'ellipsis', whiteSpace: isOpen?'normal':'nowrap' }}>
+                          {f.title}
+                        </span>
+                        <span style={{ color:'#3B6B96', fontSize:11, flexShrink:0 }}>{isOpen ? '▾' : '▸'}</span>
+                      </div>
+                      {isOpen && (
+                        <div className="fade-in" style={{ marginTop:8, paddingLeft:2 }}>
+                          {f.detail && <div style={{ fontSize:11.5, color:'#C9D6E8', lineHeight:1.6, marginBottom:6 }}>{f.detail}</div>}
+                          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                            {f.owasp && <span className="meta-pill meta-owasp" title={f.owasp}>{f.owasp}</span>}
+                            {f.mitre && <span className="meta-pill meta-module">{f.mitre}</span>}
+                          </div>
+                          {f.remediation && (
+                            <div style={{ fontSize:11.5, color:'#34D399', lineHeight:1.6, marginTop:6 }}>
+                              <strong style={{ color:'#22C55E' }}>Fix:</strong> {f.remediation}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {!isExpanded && hidden > 0 && (
+                  <button className="mfc-expander" onClick={(e) => { e.stopPropagation(); setShowAll(p => ({ ...p, [mod]: true })); }}>
+                    ▾ Show all {items.length} findings
+                  </button>
+                )}
+                {isExpanded && items.length > MODULE_CARD_LIMIT && (
+                  <button className="mfc-expander" onClick={(e) => { e.stopPropagation(); setShowAll(p => ({ ...p, [mod]: false })); }}>
+                    ▴ Show fewer
+                  </button>
+                )}
+              </div>
+              );
+              })()}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Compliance view — attack-surface findings → NIST/CIS/SOC 2 controls ─────────
+const CHIP_KINDS = [
+  ['nist_800_53', 'NIST', 'chip-nist'],
+  ['cis_control', 'CIS', 'chip-cis'],
+  ['soc2_tsc', 'SOC 2', 'chip-soc'],
+];
+const TIER_COLORS = { CRITICAL:'#EF4444', HIGH:'#F97316', MODERATE:'#EAB308', LOW:'#22C55E', CLEAN:'#22C55E' };
+
+function ComplianceView({ scanId }) {
+  const [rpt, setRpt] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    setRpt(null); setErr('');
+    api.getCompliance(scanId).then(setRpt).catch(() => setErr('Could not load the compliance mapping. Is the bridge engine installed on the backend?'));
+  }, [scanId]);
+
+  if (err) return <div className="card" style={{ padding:'28px', textAlign:'center', color:'#EF4444', fontSize:13 }}>{err}</div>;
+  if (!rpt) return <div style={{ padding:'40px', textAlign:'center', color:'#3B6B96', fontSize:13 }}>Mapping findings to controls…</div>;
+
+  const tier = rpt.risk_tier || 'CLEAN';
+  const tierC = TIER_COLORS[tier] || '#64748B';
+  const fw = rpt.frameworks_implicated || {};
+  const fwMeta = [['NIST 800-53', fw['NIST 800-53']||[]], ['CIS', fw['CIS']||[]], ['SOC 2', fw['SOC 2']||[]]];
+
+  return (
+    <div className="fade-in">
+      {/* Risk band */}
+      <div className="card compliance-band" style={{ borderLeft:`4px solid ${tierC}` }}>
+        <div>
+          <div style={{ fontSize:34, fontWeight:900, color:tierC, lineHeight:1 }}>{tier}</div>
+          <div style={{ fontSize:10.5, letterSpacing:'0.14em', textTransform:'uppercase', color:'#5B7FA6', marginTop:4 }}>Compliance Risk Tier</div>
+        </div>
+        <div style={{ paddingLeft:22, borderLeft:'1px solid #162843' }}>
+          <div style={{ fontSize:26, fontWeight:800, color:'#E2E8F0', fontVariantNumeric:'tabular-nums' }}>{rpt.compliance_risk_score}</div>
+          <div style={{ fontSize:10.5, color:'#5B7FA6', marginTop:3 }}>composite risk score</div>
+        </div>
+        <div style={{ paddingLeft:22, borderLeft:'1px solid #162843' }}>
+          <div style={{ fontSize:26, fontWeight:800, color:'#E2E8F0', fontVariantNumeric:'tabular-nums' }}>{rpt.finding_count}</div>
+          <div style={{ fontSize:10.5, color:'#5B7FA6', marginTop:3 }}>findings mapped</div>
+        </div>
+        <a href={`${API}/api/scan/${scanId}/compliance/report`} target="_blank" rel="noreferrer" style={{ marginLeft:'auto' }}>
+          <button className="btn-gold">↓ Compliance Report</button>
+        </a>
+      </div>
+
+      {/* Framework summary */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))', gap:12, margin:'14px 0 18px' }}>
+        {fwMeta.map(([label, codes]) => (
+          <div key={label} className="card" style={{ padding:'14px 16px' }}>
+            <div style={{ fontSize:24, fontWeight:800, color:'#E4C04A', fontVariantNumeric:'tabular-nums' }}>{codes.length}</div>
+            <div style={{ fontSize:10.5, letterSpacing:'0.1em', textTransform:'uppercase', color:'#5B7FA6', marginTop:2 }}>{label} controls</div>
+            <div style={{ fontSize:10.5, color:'#7FB0E6', marginTop:8, lineHeight:1.6, fontFamily:'monospace', wordBreak:'break-word' }}>
+              {codes.length ? codes.join(', ') : '—'}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Finding → control cards */}
+      {rpt.finding_count === 0 ? (
+        <div className="card" style={{ padding:'32px', textAlign:'center', color:'#22C55E', fontSize:13 }}>
+          ✓ No attack-surface findings mapped to compliance controls — clean.
+        </div>
+      ) : (
+        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+          {rpt.findings.map((f, i) => {
+            const c = sevColors[(f.severity||'info').toLowerCase()] || '#64748B';
+            return (
+              <div key={i} className="card compliance-finding" style={{ borderLeft:`4px solid ${c}` }}>
+                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+                  <SevBadge sev={f.severity}/>
+                  <span style={{ fontSize:15, fontWeight:700, color:'#F1F5FB' }}>{f.title}</span>
+                </div>
+                <div className="compliance-evidence">{f.evidence}</div>
+                <div style={{ display:'flex', gap:8, flexWrap:'wrap', margin:'10px 0' }}>
+                  {CHIP_KINDS.map(([key, label, cls]) => (
+                    (f[key] && f[key].length) ? (
+                      <span key={key} className={`ctrl-chip ${cls}`}>{label}: {f[key].join(', ')}</span>
+                    ) : null
+                  ))}
+                </div>
+                <p style={{ fontSize:12.5, color:'#C9D6E8', lineHeight:1.6, margin:'6px 0' }}>
+                  <strong style={{ color:'#E4C04A' }}>Governance impact. </strong>{f.governance_impact}
+                </p>
+                <p style={{ fontSize:12.5, color:'#34D399', lineHeight:1.6, margin:'6px 0 0' }}>
+                  <strong style={{ color:'#22C55E' }}>Remediation. </strong>{f.remediation}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Results view ───────────────────────────────────────────────────────────────
 function ResultsView({ scanId, history }) {
   const [data, setData] = useState(null);
@@ -1619,19 +1931,20 @@ function ResultsView({ scanId, history }) {
       </div>
 
       {/* Tabs */}
-      <div style={{ display:'flex', gap:0, borderBottom:'1px solid #162843', marginBottom:16 }}>
-        {[['findings','Findings'], ['charts','Charts'], ['map','Threat Map'], ['modules','Modules']].map(([k,l]) => (
-          <button key={k} onClick={() => setTab(k)} style={{
-            background:'none', border:'none', borderBottom:`2px solid ${tab===k?'#1E88E5':'transparent'}`,
-            color: tab===k ? '#42A5F5' : '#3B6B96', cursor:'pointer',
-            fontSize:12, fontWeight: tab===k ? 700 : 400, padding:'8px 16px',
-            marginBottom:-1, transition:'color 0.15s',
+      <div className="results-tabs" style={{ display:'flex', gap:0, borderBottom:'1px solid #162843', marginBottom:16, flexWrap:'wrap' }}>
+        {[['findings','Findings'], ['compliance','Compliance'], ['charts','Charts'], ['map','Threat Map'], ['modules','Modules']].map(([k,l]) => (
+          <button key={k} className="results-tab" onClick={() => setTab(k)} style={{
+            background:'none', border:'none', borderBottom:`2px solid ${tab===k?'#B8960C':'transparent'}`,
+            color: tab===k ? '#E4C04A' : '#5B7FA6', cursor:'pointer',
+            fontSize:12.5, fontWeight: tab===k ? 700 : 500, padding:'9px 18px',
+            marginBottom:-1, transition:'color 0.15s, border-color 0.15s',
           }}>{l}</button>
         ))}
       </div>
 
       {/* Tab content */}
-      {tab === 'findings' && <FindingsTable findings={data.findings||[]}/>}
+      {tab === 'findings' && <FindingsByModule findings={data.findings||[]}/>}
+      {tab === 'compliance' && <ComplianceView scanId={scanId}/>}
 
       {tab === 'charts' && (
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
