@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -25,7 +26,7 @@ from typing import Any, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -482,11 +483,36 @@ def _read_record(path: Path) -> dict:
     return raw
 
 
+# Valid scan ids are hex (dashboard) or CLI filename stems: letters, digits,
+# '_' and '-' only. No dots (blocks ".."), no path separators. Used to build
+# filenames under OUTPUT_DIR, so this is the gate against path traversal.
+_SCAN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _safe_scan_id(scan_id: str) -> str:
+    """Reject any scan id that isn't a plain identifier, so a crafted id like
+    '../../etc/passwd' can never escape OUTPUT_DIR when used as a filename."""
+    if not isinstance(scan_id, str) or not _SCAN_ID_RE.match(scan_id):
+        raise HTTPException(400, "Invalid scan id.")
+    return scan_id
+
+
+def _scan_file(scan_id: str) -> Path:
+    """Resolve OUTPUT_DIR/<scan_id>.json, validated and confined to OUTPUT_DIR."""
+    _safe_scan_id(scan_id)
+    path = OUTPUT_DIR / f"{scan_id}.json"
+    # Defense in depth: the resolved file must still live directly in OUTPUT_DIR.
+    if path.resolve().parent != OUTPUT_DIR.resolve():
+        raise HTTPException(400, "Invalid scan id.")
+    return path
+
+
 def _fetch(scan_id: str) -> dict:
+    _safe_scan_id(scan_id)
     with _lock:
         if scan_id in _scans:
             return dict(_scans[scan_id])
-    path = OUTPUT_DIR / f"{scan_id}.json"
+    path = _scan_file(scan_id)
     if path.exists():
         data = _read_record(path)
         with _lock:
@@ -704,6 +730,83 @@ async def compare_scans(id_a: str, id_b: str) -> dict:
             for s in ["critical", "high", "medium", "low", "info"]
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Compliance bridge — map a scan's attack-surface findings to GRC controls
+# (NIST 800-53 / CIS / SOC 2) via the bss-bridge engine.
+# ---------------------------------------------------------------------------
+
+def _scan_path_for(scan_id: str) -> Path:
+    path = _scan_file(scan_id)  # validates scan_id + confines to OUTPUT_DIR
+    if not path.exists():
+        raise HTTPException(404, f"Scan '{scan_id}' not found")
+    return path
+
+
+def _cli_shaped_scan(path: Path) -> dict:
+    """Return the scan as a CLI-format dict ({module: {...}}), which the bridge
+    engine expects. CLI scans are already this shape; dashboard-native records
+    keep their module data under modules[name]['data'], so rebuild it."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(raw, dict) and "scan_id" in raw and "modules" in raw:
+        out: dict[str, Any] = {"target": raw.get("target")}
+        for name, mod in (raw.get("modules") or {}).items():
+            if not isinstance(mod, dict):
+                continue
+            entry = dict(mod.get("data") or {})
+            entry["findings"] = [f for f in raw.get("findings", []) if f.get("module") == name]
+            out[name] = entry
+        return out
+    return raw
+
+
+def _run_bridge(scan_id: str) -> dict:
+    """Run bridge_scan() against a scan, adapting format as needed."""
+    try:
+        from bssrecon.control_bridge import bridge_scan  # type: ignore
+    except ImportError:
+        raise HTTPException(
+            501,
+            "Compliance bridge engine not installed (bssrecon.control_bridge). "
+            "Activate the bss-recon venv so bssrecon is importable.",
+        )
+    path = _scan_path_for(scan_id)
+    scan = _cli_shaped_scan(path)
+
+    # bridge_scan() takes a file path; feed it the (possibly reshaped) scan via
+    # a short-lived temp file so the original on-disk scan is never modified.
+    import os
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(scan, f, default=str)
+        return bridge_scan(tmp)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+@app.get("/api/scan/{scan_id}/compliance")
+async def compliance(scan_id: str) -> dict:
+    """Map a scan's findings to NIST 800-53 / CIS / SOC 2 controls."""
+    report = _run_bridge(scan_id)
+    report["scan_id"] = scan_id
+    return report
+
+
+@app.get("/api/scan/{scan_id}/compliance/report")
+async def compliance_report(scan_id: str):
+    """Branded HTML 'Attack Surface Compliance Report' for download/print."""
+    report = _run_bridge(scan_id)
+    try:
+        from bssrecon.bridge_report import render  # type: ignore
+    except ImportError:
+        raise HTTPException(501, "Compliance report renderer not installed.")
+    return HTMLResponse(render(report))
 
 
 @app.websocket("/ws/scan/{scan_id}")
