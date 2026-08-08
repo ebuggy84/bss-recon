@@ -99,15 +99,30 @@ def _load_current_scan(output_dir: Path, target: str) -> dict:
     return {}
 
 
-def _tier(total_score: int) -> str:
-    """Human-readable priority tier for a composite score."""
-    if total_score >= 250:
+def _normalize_score(raw: int) -> int:
+    """Map an unbounded triage total to a 0-100 headline that reads on the same
+    scale as the dashboard's attack-surface ring.
+
+    Uses a saturating curve 100*raw/(raw+K): a few low/medium findings land in
+    the teens, a cluster of high-severity findings climbs the mid-band, and a
+    large mass of high/critical findings saturates near 100. K=300 is tuned so
+    the common cases line up with the ring (e.g. 3 DNS gaps ≈ low teens; 119
+    high-severity CVEs ≈ mid-90s). The raw total is preserved separately."""
+    if raw <= 0:
+        return 0
+    return round(100 * raw / (raw + 300))
+
+
+def _tier(score: int) -> str:
+    """Human-readable tier for a 0-100 score, aligned with the ring's risk
+    zones (0-30 low, 31-60 moderate, 61-80 high, 81-100 critical)."""
+    if score >= 81:
         return "CRITICAL — test immediately"
-    if total_score >= 120:
+    if score >= 61:
         return "HIGH — high-value target"
-    if total_score >= 50:
-        return "MEDIUM — worth investigating"
-    if total_score > 0:
+    if score >= 31:
+        return "MODERATE — worth investigating"
+    if score > 0:
         return "LOW — minimal surface"
     return "MINIMAL — low attack surface"
 
@@ -264,15 +279,17 @@ class TargetScore(BaseModule):
             output_dir = get_output_dir(getattr(self, "config", {}) or {}, create=False)
             results = _load_current_scan(output_dir, target)
 
-        total_score, breakdown, priority_items = _score_results(results)
-        tier = _tier(total_score)
+        raw_score, breakdown, priority_items = _score_results(results)
+        score = _normalize_score(raw_score)   # 0-100 headline (ring scale)
+        tier = _tier(score)
 
         findings = [
             {
                 "severity": "info",
-                "title": f"Attack Surface Score: {total_score} pts — {tier}",
+                "title": f"Attack Surface Score: {score}/100 — {tier}",
                 "detail": (
-                    f"Composite attack-surface score for {target}. "
+                    f"Normalized attack-surface score for {target}: {score}/100 "
+                    f"({raw_score} raw triage points). "
                     f"Score breakdown: {json.dumps(breakdown)}. "
                     f"Top items: {'; '.join(i['detail'] for i in priority_items[:5]) or 'none'}."
                 ),
@@ -288,7 +305,9 @@ class TargetScore(BaseModule):
 
         return {
             "domain": target,
-            "total_score": total_score,
+            "score": score,                 # 0-100 normalized headline
+            "raw_score": raw_score,         # unbounded triage total (secondary)
+            "total_score": raw_score,       # back-compat alias for raw_score
             "tier": tier,
             "breakdown": breakdown,
             "priority_items": priority_items,
