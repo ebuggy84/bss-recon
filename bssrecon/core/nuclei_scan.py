@@ -348,35 +348,6 @@ def _kev_cross_reference(findings: list[dict], config: dict | None) -> int:
         return 0
 
 
-def _quarantine_result(target: str, reason: str, scope_path) -> dict:
-    """Result returned when a target FAILS the scope check. Nuclei is not run."""
-    _log(f"BLOCKED — refusing to scan out-of-scope target '{target}': {reason}")
-    return {
-        "domain": target,
-        "status": "QUARANTINED",
-        "nuclei_available": True,
-        "nuclei_ran": False,
-        "scope_enforced": True,
-        "scope_file": str(scope_path) if scope_path else None,
-        "out_of_scope_reason": reason,
-        "findings": [{
-            "severity": "info",
-            "title": "Nuclei skipped — target out of scope",
-            "detail": (
-                f"Active scanning of '{target}' was blocked by the engagement scope "
-                f"guard before any probe was sent. Reason: {reason}"
-            ),
-            "owasp": "",
-            "mitre": "",
-            "remediation": (
-                "If this target is genuinely in scope, add it to the scope file's "
-                "allowed_domains (and allowed_cidrs if IP-restricted). Otherwise "
-                "leave it blocked — scanning it may be unauthorised."
-            ),
-        }],
-    }
-
-
 # ---------------------------------------------------------------------------
 # Module
 # ---------------------------------------------------------------------------
@@ -389,62 +360,13 @@ class NucleiScan(BaseModule):
     api_key_name = None
     mode = "active"
 
-    def _scope_gate(self, target: str) -> tuple[bool, dict | None, dict]:
-        """MANDATORY pre-flight scope check. Nothing may probe `target` until
-        this returns allowed=True.
-
-        Returns (allowed, blocked_result_or_None, scope_meta). Fails CLOSED on
-        any guard error: if we cannot prove a target is in scope, we do not
-        scan it.
-        """
-        config = getattr(self, "config", {}) or {}
-
-        try:
-            from bssrecon.scope_guard import load_guard, ScopeFileError
-        except Exception as exc:
-            reason = (f"Scope guard unavailable ({exc}); refusing to run active "
-                      f"scanning without scope enforcement")
-            return False, _quarantine_result(target, reason, None), {"scope_enforced": True}
-
-        try:
-            guard, scope_path = load_guard(config)
-        except ScopeFileError as exc:
-            # Malformed scope file → fail closed. Never downgrade to "unenforced".
-            return False, _quarantine_result(target, str(exc), None), {"scope_enforced": True}
-
-        if guard is None:
-            # No scope file configured anywhere. Allowed, but loudly flagged.
-            _log("WARNING: no scope file configured — active scanning is running "
-                 "WITHOUT scope enforcement. Create scope.yaml (see "
-                 "bssrecon/scope.example.yaml) before engagement work.")
-            return True, None, {
-                "scope_enforced": False,
-                "scope_file": None,
-                "scope_warning": (
-                    "Active scanning ran without scope enforcement — no scope file "
-                    "configured."
-                ),
-            }
-
-        ok, reason = guard.check_target(target)
-        if not ok:
-            return False, _quarantine_result(target, reason, scope_path), {"scope_enforced": True}
-
-        _log(f"scope OK for '{target}' ({guard.program_name}): {reason}")
-        return True, None, {
-            "scope_enforced": True,
-            "scope_file": str(scope_path),
-            "scope_program": guard.program_name,
-            "scope_reason": reason,
-        }
-
     def run(self, target: str) -> dict:
         # ── GUARDRAIL 1: scope enforcement ────────────────────────────────
-        # This MUST stay first. No nuclei template may fire at a target that
-        # has not passed the engagement scope guard.
-        allowed, blocked, scope_meta = self._scope_gate(target)
-        if not allowed:
-            return blocked
+        # Applied centrally: BaseModule.__init_subclass__ wraps this run() with
+        # the engagement scope gate (bssrecon/scope_enforcement.py), so no
+        # template can fire at a target that has not passed ScopeGuard, and the
+        # same protection covers every other active module automatically.
+        scope_meta: dict = {}
 
         if not shutil.which("nuclei"):
             return {
@@ -577,26 +499,6 @@ class NucleiScan(BaseModule):
         # CVE outranks whatever severity the template assigned, so it gets
         # escalated to critical and badged in the dashboard.
         kev_escalated = _kev_cross_reference(findings, getattr(self, "config", None))
-
-        # Surface the "ran without scope enforcement" warning as a visible
-        # finding (info severity — it's an operator-config issue, not a flaw in
-        # the target, so it must not distort the target's risk score).
-        if scope_meta.get("scope_warning"):
-            findings.append({
-                "severity": "info",
-                "title": "Active scan ran without scope enforcement",
-                "detail": (
-                    f"Nuclei actively scanned '{target}' but no engagement scope file "
-                    f"was configured, so no scope guard was applied. Create scope.yaml "
-                    f"(see bssrecon/scope.example.yaml) and re-run for enforced scanning."
-                ),
-                "owasp": "",
-                "mitre": "",
-                "remediation": (
-                    "Define allowed_domains/allowed_cidrs in scope.yaml before running "
-                    "active modules during an engagement."
-                ),
-            })
 
         # Sort critical → info
         _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}

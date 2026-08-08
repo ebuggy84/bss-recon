@@ -47,6 +47,55 @@ class BaseModule(ABC):
     # "active"  = makes requests to target servers (needs permission)
     mode = "passive"
 
+    # Does this module send traffic AT the target (vs. querying a third-party
+    # OSINT service about it)? None = derive from mode. Set True explicitly for
+    # a module that contacts the target but is not gated behind --active (the
+    # ssl module opens a TCP/TLS connection to target:443 while running in the
+    # default passive set). Any module that is True gets scope-enforced.
+    contacts_target = None
+
+    @classmethod
+    def _needs_scope_check(cls) -> bool:
+        if cls.contacts_target is not None:
+            return bool(cls.contacts_target)
+        return cls.mode == "active"
+
+    def __init_subclass__(cls, **kwargs):
+        """Automatically wrap run() with the engagement scope gate for every
+        module that contacts the target.
+
+        Enforcement lives here, not in each module, so it cannot be forgotten:
+        a new active module is scope-gated the moment it subclasses BaseModule.
+        (Previously only nuclei was gated and five other active modules could
+        fire at out-of-scope targets.)
+        """
+        super().__init_subclass__(**kwargs)
+
+        run = cls.__dict__.get("run")
+        if run is None or getattr(run, "_scope_wrapped", False):
+            return
+        if not cls._needs_scope_check():
+            return
+
+        import functools
+
+        @functools.wraps(run)
+        def guarded_run(self, target, *args, **kwargs):
+            from bssrecon.scope_enforcement import scope_gate
+            allowed, meta, blocked = scope_gate(
+                target, getattr(self, "config", None), self.name
+            )
+            if not allowed:
+                return blocked           # nothing is sent
+            result = run(self, target, *args, **kwargs)
+            if isinstance(result, dict):
+                for k, v in meta.items():
+                    result.setdefault(k, v)
+            return result
+
+        guarded_run._scope_wrapped = True
+        cls.run = guarded_run
+
     def __init__(self, config=None):
         self.config = config or {}
         self.timeout = self.config.get("scan", {}).get("timeout", 10)

@@ -24,6 +24,11 @@ class SslModule(BaseModule):
     name = "ssl"
     description = "SSL/TLS certificate analysis"
     requires_api_key = False
+    # Runs in the default (passive) set, but it does open a real TCP connection
+    # and TLS handshake to target:443 — that is direct contact with the target's
+    # server, so it is scope-enforced like the active modules. mode is left
+    # "passive" so existing default scans are unchanged.
+    contacts_target = True
 
     def _connect(self, host, port):
         """Open a TCP connection to host:port, trying IPv4 before IPv6.
