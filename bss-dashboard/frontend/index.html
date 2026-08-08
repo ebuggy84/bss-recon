@@ -1010,12 +1010,15 @@ function ModuleGauge({ status, count }) {
 }
 
 // ─── Attack surface score gauge (0–100, colour-zoned) ────────────────────────────
-function ScoreGauge({ score }) {
+function ScoreGauge({ score, tier }) {
   const v = Math.max(0, Math.min(100, Math.round(score || 0)));
   const R = 74, C = 2 * Math.PI * R;
   const off = C * (1 - v / 100);
   const zone = v <= 30 ? '#22C55E' : v <= 60 ? '#EAB308' : v <= 80 ? '#F97316' : '#EF4444';
   const label = v <= 30 ? 'Low' : v <= 60 ? 'Moderate' : v <= 80 ? 'High' : 'Critical';
+  // Prefer the score module's tier string (hoisted from the backend) so the ring
+  // shows the exact same label as the score card. Fall back to the derived word.
+  const tierText = tier || `${label} risk`;
   return (
     <div className="card" style={{ padding:18, display:'flex', flexDirection:'column', alignItems:'center' }}>
       <div style={{ fontSize:11, fontWeight:700, color:'#3B6B96', letterSpacing:'0.08em',
@@ -1030,7 +1033,8 @@ function ScoreGauge({ score }) {
         <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column',
           alignItems:'center', justifyContent:'center' }}>
           <div style={{ fontSize:46, fontWeight:800, color:'#E2E8F0', lineHeight:1 }}>{v}</div>
-          <div style={{ fontSize:12, fontWeight:700, color:zone, marginTop:4 }}>{label} risk</div>
+          <div style={{ fontSize:10.5, fontWeight:700, color:zone, marginTop:5, textAlign:'center',
+            maxWidth:150, lineHeight:1.25 }}>{tierText}</div>
         </div>
       </div>
       <div style={{ display:'flex', gap:12, marginTop:12, fontSize:9.5, color:'#5B7FA6' }}>
@@ -1926,7 +1930,7 @@ function ResultsView({ scanId, history }) {
       {/* Centerpiece visuals — attack surface score + severity donut */}
       <div style={{ display:'grid', gridTemplateColumns:'minmax(240px, 1fr) minmax(260px, 1.35fr)',
         gap:14, marginBottom:18 }}>
-        <ScoreGauge score={score}/>
+        <ScoreGauge score={score} tier={data.tier}/>
         <SeverityDonut counts={sc}/>
       </div>
 

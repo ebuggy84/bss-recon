@@ -238,6 +238,23 @@ def _sev_counts(findings: list[dict]) -> dict[str, int]:
     return c
 
 
+def _surface_score(results_map: dict) -> tuple:
+    """Compute the unified 0-100 attack-surface score + tier using the SAME math
+    as the score module (saturating curve + subdomain surface + tier bands), so
+    the dashboard ring and the score card show one identical number. results_map
+    is a {module_name: result} mapping. Returns (score, raw_score, tier) or
+    (None, None, None) if the scoring engine isn't importable (demo mode)."""
+    try:
+        from bssrecon.core.target_score import (  # type: ignore
+            _score_results, _normalize_score, _tier,
+        )
+    except Exception:
+        return None, None, None
+    raw, _breakdown, _priority = _score_results(results_map or {})
+    score = _normalize_score(raw)
+    return score, raw, _tier(score)
+
+
 def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | None,
               profile: str = "balanced") -> None:
     registry = _load_registry()
@@ -344,6 +361,7 @@ def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | No
             })
 
     sev = _sev_counts(all_findings)
+    surface_score, surface_raw, surface_tier = _surface_score(results_map)
     finished_at = datetime.now(timezone.utc).isoformat()
 
     with _lock:
@@ -351,6 +369,10 @@ def _run_scan(scan_id: str, target: str, active: bool, requested: list[str] | No
             "status": "complete",
             "findings": all_findings,
             "severity_counts": sev,
+            # Unified attack-surface score (drives the ring AND the score card).
+            "score": surface_score,
+            "raw_score": surface_raw,
+            "tier": surface_tier,
             "finished_at": finished_at,
         })
 
@@ -482,12 +504,43 @@ def _normalize_cli_record(raw: dict, path: Path) -> dict:
     }
 
 
+def _apply_surface_score(record: dict) -> dict:
+    """Attach the unified 0-100 score/tier to a dashboard-shaped record and
+    refresh the score module's own finding so the ring and the score card always
+    agree — including for scans saved before the scoring fix."""
+    if not isinstance(record, dict):
+        return record
+    modules = record.get("modules") or {}
+    findings = record.get("findings") or []
+    # Rebuild the {module: {..., findings}} mapping the scorer expects.
+    results_map: dict[str, Any] = {}
+    for name, mod in modules.items():
+        if not isinstance(mod, dict):
+            continue
+        data = dict(mod.get("data") or {})
+        data["findings"] = [f for f in findings if f.get("module") == name]
+        results_map[name] = data
+
+    score, raw, tier = _surface_score(results_map)
+    if score is None:
+        return record
+
+    record["score"] = score
+    record["raw_score"] = raw
+    record["tier"] = tier
+    # Keep the score module's finding title in sync with the recomputed value.
+    for f in findings:
+        if isinstance(f, dict) and f.get("module") == "score":
+            f["title"] = f"Attack Surface Score: {score}/100 — {tier}"
+    return record
+
+
 def _read_record(path: Path) -> dict:
-    """Read a scan file, normalizing CLI-format files to the dashboard shape."""
+    """Read a scan file, normalizing CLI-format files to the dashboard shape and
+    attaching the unified attack-surface score."""
     raw = json.loads(path.read_text(encoding="utf-8"))
-    if _looks_like_cli_format(raw):
-        return _normalize_cli_record(raw, path)
-    return raw
+    record = _normalize_cli_record(raw, path) if _looks_like_cli_format(raw) else raw
+    return _apply_surface_score(record)
 
 
 # Valid scan ids are hex (dashboard) or CLI filename stems: letters, digits,
@@ -576,6 +629,9 @@ async def get_status(scan_id: str) -> dict:
         "started_at": s.get("started_at"),
         "finished_at": s.get("finished_at"),
         "active": s.get("active", False),
+        "score": s.get("score"),
+        "raw_score": s.get("raw_score"),
+        "tier": s.get("tier"),
     }
 
 
@@ -592,6 +648,9 @@ async def get_results(scan_id: str) -> dict:
         "findings": s.get("findings", []),
         "modules": s.get("modules", {}),
         "severity_counts": s.get("severity_counts", {}),
+        "score": s.get("score"),
+        "raw_score": s.get("raw_score"),
+        "tier": s.get("tier"),
     }
 
 
