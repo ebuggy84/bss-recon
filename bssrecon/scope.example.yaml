@@ -1,0 +1,16 @@
+# Copy this to scope.yaml and fill in per-engagement before running active modules.
+# denied_* rules always win, even over a matching allowed wildcard.
+
+program_name: "Example Bug Bounty Program"
+
+allowed_domains:
+  - "example.com"
+  - "*.example.com"       # covers all subdomains of example.com
+
+allowed_cidrs:
+  - "203.0.113.0/24"      # only needed if the program restricts by IP range
+
+denied_domains:
+  - "partner-saas.example.com"   # explicitly carved out even though it matches *.example.com
+
+denied_cidrs: []

@@ -1,5 +1,7 @@
 # ─── Secrets / credentials (never commit) ───────────────────────────────
 config.yaml
+# per-engagement scope (client domains) — never commit
+scope.yaml
 .env
 .env.*
 !.env.example
